@@ -63,6 +63,7 @@ export async function insertFromFile(at) {
     pages.forEach((p, n) => doc.insertPage(at + n, p));
     await applyBytes(await doc.save(), 'ページを挿入');
     setStatus(`${pages.length}ページを挿入しました`);
+  } catch (e) { alertDialog('挿入エラー', e.message);
   } finally { hideProgress(); }
 }
 
@@ -144,6 +145,7 @@ export async function combineFiles() {
       await loadBytes(merged, { fileName: '結合結果.pdf', password: null, resetHistory: true });
     }
     setStatus('結合が完了しました');
+  } catch (e) { alertDialog('結合エラー', e.message);
   } finally { hideProgress(); }
 }
 

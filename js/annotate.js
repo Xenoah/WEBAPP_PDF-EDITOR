@@ -1,7 +1,7 @@
 // ===== 注釈: ハイライト・ノート・フリーハンド描画・図形・テキスト注釈 =====
 // 注釈はまずオーバーレイ(pendingAnnots)に保持し、「注釈を適用」でPDFへ書き込む
 import { state, getLibDoc, applyBytes, rgb, PDFName, PDFString, BlendMode, LineCapStyle } from './state.js';
-import { $, $$, setStatus, showDialog, showProgress, hideProgress, hexToRgb01, getJapaneseFont } from './utils.js';
+import { $, $$, setStatus, showDialog, showProgress, hideProgress, hexToRgb01, getJapaneseFont, alertDialog } from './utils.js';
 import { addOverlayHook, getPageView } from './viewer.js';
 
 const ANNOT_TOOLS = ['highlight', 'note', 'draw', 'rect', 'ellipse', 'line', 'freetext'];
@@ -275,5 +275,6 @@ export async function applyAnnotations() {
     state.pendingAnnots = [];
     await applyBytes(await doc.save(), '注釈を適用');
     setStatus(`${count}個の注釈をPDFへ適用しました`);
+  } catch (e) { alertDialog('注釈の適用エラー', e.message);
   } finally { hideProgress(); }
 }

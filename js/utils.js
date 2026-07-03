@@ -19,6 +19,9 @@ export function hideProgress() {
 
 // ---- ダイアログ ----
 export function showDialog(title, bodyHTML, actions) {
+  // 進捗オーバーレイ(z-index 600)がダイアログ(z-index 500)を覆って操作不能になるのを防ぐ:
+  // ダイアログはユーザー操作を要求するため、表示時点で必ず進捗を閉じる
+  hideProgress();
   return new Promise(resolve => {
     $('#dialog-title').textContent = title;
     $('#dialog-body').innerHTML = bodyHTML;
@@ -113,6 +116,7 @@ let notoFontBytes = null;
 export async function getJapaneseFont() {
   if (!notoFontBytes) {
     const res = await fetch('vendor/fonts/NotoSansJP-Regular.ttf');
+    if (!res.ok) throw new Error(`日本語フォントの読込に失敗しました (HTTP ${res.status})`);
     notoFontBytes = await res.arrayBuffer();
   }
   return notoFontBytes;

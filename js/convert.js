@@ -249,6 +249,7 @@ export async function exportToWord() {
     const doc = new Document({ sections: [{ children }] });
     downloadBytes(await Packer.toBlob(doc), `${baseName(state.fileName)}.docx`, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     setStatus('Word文書へ書き出しました');
+  } catch (e) { alertDialog('書き出しエラー', e.message);
   } finally { hideProgress(); }
 }
 
@@ -277,6 +278,7 @@ export async function exportToExcel() {
     }
     window.XLSX.writeFile(wb, `${baseName(state.fileName)}.xlsx`);
     setStatus('Excelブックへ書き出しました');
+  } catch (e) { alertDialog('書き出しエラー', e.message);
   } finally { hideProgress(); }
 }
 
@@ -296,6 +298,7 @@ export async function exportToPpt() {
     const blob = await pptx.write('blob');
     downloadBytes(blob, `${baseName(state.fileName)}.pptx`, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
     setStatus('PowerPointへ書き出しました');
+  } catch (e) { alertDialog('書き出しエラー', e.message);
   } finally { hideProgress(); }
 }
 async function pageAspect() {
@@ -322,6 +325,7 @@ export async function exportToImages(format = 'png') {
       downloadBytes(await zip.generateAsync({ type: 'blob' }), `${baseName(state.fileName)}_images.zip`, 'application/zip');
     }
     setStatus('画像へ書き出しました');
+  } catch (e) { alertDialog('書き出しエラー', e.message);
   } finally { hideProgress(); }
 }
 
@@ -336,5 +340,6 @@ export async function exportToText() {
     }
     downloadBytes(new TextEncoder().encode(out), `${baseName(state.fileName)}.txt`, 'text/plain');
     setStatus('テキストへ書き出しました');
+  } catch (e) { alertDialog('書き出しエラー', e.message);
   } finally { hideProgress(); }
 }

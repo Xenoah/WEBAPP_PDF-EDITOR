@@ -1,5 +1,7 @@
 // ===== Service Worker: 全アセットをキャッシュしてオフライン動作を保証 =====
-const CACHE = 'pdf-editor-pro-v1';
+// 戦略: アプリ本体(js/css/html)はネットワーク優先(更新を確実に反映)、
+//       vendor/(大容量・不変)はキャッシュ優先。どちらもオフライン時はキャッシュで動作。
+const CACHE = 'pdf-editor-pro-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -37,16 +39,28 @@ self.addEventListener('activate', e => {
   );
 });
 
-// キャッシュ優先 + ネットワークフォールバック(取得できたものは追記キャッシュ)
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
-      if (res.ok && new URL(e.request.url).origin === location.origin) {
-        const clone = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, clone));
-      }
-      return res;
-    }))
-  );
+  const url = new URL(e.request.url);
+  if (url.origin !== location.origin) return;
+
+  const cachePut = res => {
+    if (res && res.ok) {
+      const clone = res.clone();
+      caches.open(CACHE).then(c => c.put(e.request, clone));
+    }
+    return res;
+  };
+
+  if (url.pathname.includes('/vendor/')) {
+    // vendor: キャッシュ優先(不変・大容量)
+    e.respondWith(
+      caches.match(e.request).then(hit => hit || fetch(e.request).then(cachePut))
+    );
+  } else {
+    // アプリ本体: ネットワーク優先(修正の即時反映)、オフライン時はキャッシュ
+    e.respondWith(
+      fetch(e.request).then(cachePut).catch(() => caches.match(e.request))
+    );
+  }
 });

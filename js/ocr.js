@@ -27,14 +27,20 @@ export async function runOcrDialog() {
 }
 
 async function runOcr(lang, pageIndices) {
-  showProgress('OCRエンジンを初期化中...', 0);
+  showProgress('OCRエンジンを初期化中...(言語データ読込に数十秒かかる場合があります)', 0);
   let worker = null;
+  let curPageLabel = '';
   try {
     worker = await window.Tesseract.createWorker(lang, 1, {
       workerPath: 'vendor/tesseract.worker.min.js',
       corePath: 'vendor/tesseract-core',
       langPath: 'vendor/tessdata',
       gzip: true,
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          showProgress(`${curPageLabel} — 認識中 ${Math.round(m.progress * 100)}%`, m.progress);
+        }
+      },
     });
     const doc = await getLibDoc();
     doc.registerFontkit(window.fontkit);
@@ -44,7 +50,8 @@ async function runOcr(lang, pageIndices) {
 
     for (let n = 0; n < pageIndices.length; n++) {
       const pi = pageIndices[n];
-      showProgress(`OCR実行中... ページ ${pi + 1} (${n + 1}/${pageIndices.length})`, n / pageIndices.length);
+      curPageLabel = `OCR実行中... ページ ${pi + 1} (${n + 1}/${pageIndices.length})`;
+      showProgress(curPageLabel, n / pageIndices.length);
       const canvas = await renderPageToCanvas(pi + 1, SCALE);
       const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
       const page = doc.getPage(pi);
