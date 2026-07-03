@@ -1,0 +1,17 @@
+{
+  "name": "PDF Editor Pro",
+  "short_name": "PDF Editor",
+  "description": "Acrobat Pro互換のオフラインWebPDFエディター",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#323639",
+  "theme_color": "#323639",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjE4IiBmaWxsPSIjZDkzMDI1Ii8+PHRleHQgeD0iNTAiIHk9IjY2IiBmb250LXNpemU9IjQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiNmZmYiIHRleHQtYW5jaG9yPSJtaWRkbGUiPlBERjwvdGV4dD48L3N2Zz4=",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

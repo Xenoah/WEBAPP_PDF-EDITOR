@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>smoke test</title>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="vendor/tesseract.min.js"></script>
+</head>
+<body>
+<pre id="out">RUNNING</pre>
+<script type="module">
+import * as pdfjsLib from './vendor/pdf.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
+const out = [];
+const log = (name, ok, extra = '') => {
+  out.push(`${ok ? 'PASS' : 'FAIL'} ${name} ${extra}`);
+  document.getElementById('out').textContent = 'RUNNING\n' + out.join('\n');
+  return fetch('/__log', { method: 'POST', body: out[out.length - 1] });
+};
+
+(async () => {
+  const { PDFDocument, rgb } = window.PDFLib;
+  let bytes = null;
+
+  // 1. pdf-lib: 日本語フォント埋め込みPDF作成
+  try {
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(window.fontkit);
+    const fontBytes = await (await fetch('vendor/fonts/NotoSansJP-Regular.ttf')).arrayBuffer();
+    const font = await doc.embedFont(fontBytes, { subset: true });
+    const page = doc.addPage([595, 842]);
+    page.drawText('日本語テストABC123', { x: 50, y: 750, size: 24, font, color: rgb(0, 0, 0) });
+    page.drawRectangle({ x: 50, y: 700, width: 200, height: 30, color: rgb(1, 1, 0), opacity: 0.45 });
+    bytes = await doc.save();
+    log('pdf-lib 作成+日本語フォント', bytes.length > 1000, `(${bytes.length} bytes)`);
+  } catch (e) { log('pdf-lib 作成+日本語フォント', false, e.message); }
+
+  // 2. pdf.js: 読み込み+レンダリング+テキスト抽出
+  try {
+    const pdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+    const page = await pdf.getPage(1);
+    const vp = page.getViewport({ scale: 1.5 });
+    const c = document.createElement('canvas');
+    c.width = vp.width; c.height = vp.height;
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    const tc = await page.getTextContent();
+    const text = tc.items.map(i => i.str).join('');
+    log('pdf.js レンダリング+テキスト抽出', text.includes('日本語テスト'), `(text="${text}")`);
+  } catch (e) { log('pdf.js レンダリング+テキスト抽出', false, e.message); }
+
+  // 3. 暗号化 → パスワード付き再読込
+  try {
+    const doc = await PDFDocument.load(bytes.slice());
+    doc.encrypt({ userPassword: 'test123', ownerPassword: 'owner456', permissions: { printing: 'highResolution', copying: false } });
+    const enc = await doc.save({ useObjectStreams: false });
+    let blocked = false;
+    try { await pdfjsLib.getDocument({ data: enc.slice() }).promise; } catch (e) { blocked = e.name === 'PasswordException'; }
+    const pdf2 = await pdfjsLib.getDocument({ data: enc.slice(), password: 'test123' }).promise;
+    const doc2 = await PDFDocument.load(enc.slice(), { ignoreEncryption: true, password: 'test123' });
+    log('暗号化+パスワード再読込', blocked && pdf2.numPages === 1 && doc2.getPageCount() === 1);
+  } catch (e) { log('暗号化+パスワード再読込', false, e.message); }
+
+  // 4. OCR (英語・小画像)
+  try {
+    const c = document.createElement('canvas');
+    c.width = 400; c.height = 100;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 400, 100);
+    ctx.fillStyle = '#000'; ctx.font = '36px Arial';
+    ctx.fillText('HELLO WORLD', 30, 60);
+    const worker = await window.Tesseract.createWorker('eng', 1, {
+      workerPath: 'vendor/tesseract.worker.min.js',
+      corePath: 'vendor/tesseract-core',
+      langPath: 'vendor/tessdata',
+      gzip: true,
+    });
+    const { data } = await worker.recognize(c, {}, { blocks: true, text: true });
+    await worker.terminate();
+    let words = 0;
+    for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) words += (l.words || []).length;
+    log('OCR (Tesseract)', /HELLO/i.test(data.text) && words > 0, `(text="${(data.text || '').trim()}", words=${words})`);
+  } catch (e) { log('OCR (Tesseract)', false, e.message); }
+
+  document.getElementById('out').textContent = 'DONE\n' + out.join('\n');
+  await fetch('/__log', { method: 'POST', body: 'DONE' });
+})().catch(async e => {
+  document.getElementById('out').textContent = 'FATAL ' + e.message;
+  await fetch('/__log', { method: 'POST', body: 'FATAL ' + e.message + ' ' + (e.stack || '') });
+});
+</script>
+</body>
+</html>
