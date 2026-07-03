@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Editor Pro</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="manifest" href="manifest.json">
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/tesseract.min.js"></script>
+<script src="vendor/mammoth.browser.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/docx.iife.js"></script>
+<script src="vendor/pptxgen.bundle.js"></script>
+</head>
+<body>
+<!-- ===== メニューバー ===== -->
+<header id="menubar">
+  <span class="app-logo">PDF Editor <b>Pro</b></span>
+  <nav id="menus">
+    <div class="menu" data-menu="file"><button class="menu-btn">ファイル(F)</button>
+      <div class="menu-drop">
+        <button data-cmd="open">開く... <kbd>Ctrl+O</kbd></button>
+        <button data-cmd="create">作成(Word/Excel/PPT/画像からPDF)...</button>
+        <hr>
+        <button data-cmd="save">上書き保存 <kbd>Ctrl+S</kbd></button>
+        <button data-cmd="saveAs">名前を付けて保存... <kbd>Ctrl+Shift+S</kbd></button>
+        <div class="submenu"><button>書き出し形式 ▸</button>
+          <div class="menu-drop sub">
+            <button data-cmd="exportWord">Microsoft Word (.docx)</button>
+            <button data-cmd="exportExcel">Microsoft Excel (.xlsx)</button>
+            <button data-cmd="exportPpt">Microsoft PowerPoint (.pptx)</button>
+            <button data-cmd="exportPng">画像 - PNG</button>
+            <button data-cmd="exportJpg">画像 - JPEG</button>
+            <button data-cmd="exportText">テキスト (.txt)</button>
+          </div>
+        </div>
+        <hr>
+        <button data-cmd="props">文書のプロパティ... <kbd>Ctrl+D</kbd></button>
+        <button data-cmd="print">印刷... <kbd>Ctrl+P</kbd></button>
+        <hr>
+        <button data-cmd="close">文書を閉じる <kbd>Ctrl+W</kbd></button>
+      </div>
+    </div>
+    <div class="menu" data-menu="edit"><button class="menu-btn">編集(E)</button>
+      <div class="menu-drop">
+        <button data-cmd="undo">元に戻す <kbd>Ctrl+Z</kbd></button>
+        <button data-cmd="redo">やり直し <kbd>Ctrl+Shift+Z</kbd></button>
+        <hr>
+        <button data-cmd="find">簡易検索 <kbd>Ctrl+F</kbd></button>
+        <hr>
+        <button data-cmd="tool-editText">テキストと画像を編集</button>
+        <button data-cmd="tool-addText">テキストを追加</button>
+        <button data-cmd="tool-addImage">画像を追加</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="view"><button class="menu-btn">表示(V)</button>
+      <div class="menu-drop">
+        <button data-cmd="zoomIn">ズームイン <kbd>Ctrl++</kbd></button>
+        <button data-cmd="zoomOut">ズームアウト <kbd>Ctrl+-</kbd></button>
+        <button data-cmd="zoomFit">全体表示 <kbd>Ctrl+0</kbd></button>
+        <button data-cmd="zoom100">100%表示 <kbd>Ctrl+1</kbd></button>
+        <button data-cmd="zoomWidth">幅に合わせる <kbd>Ctrl+2</kbd></button>
+        <hr>
+        <button data-cmd="rotateViewCW">表示を右90°回転 <kbd>Ctrl+Shift++</kbd></button>
+        <button data-cmd="rotateViewCCW">表示を左90°回転 <kbd>Ctrl+Shift+-</kbd></button>
+        <hr>
+        <button data-cmd="firstPage">最初のページ <kbd>Home</kbd></button>
+        <button data-cmd="prevPage">前のページ <kbd>←</kbd></button>
+        <button data-cmd="nextPage">次のページ <kbd>→</kbd></button>
+        <button data-cmd="lastPage">最後のページ <kbd>End</kbd></button>
+      </div>
+    </div>
+    <div class="menu" data-menu="tools"><button class="menu-btn">ツール(T)</button>
+      <div class="menu-drop">
+        <button data-cmd="panel-edit">PDFを編集</button>
+        <button data-cmd="create">PDFを作成</button>
+        <button data-cmd="panel-export">書き出し</button>
+        <button data-cmd="panel-organize">ページを整理</button>
+        <button data-cmd="combine">ファイルを結合</button>
+        <button data-cmd="panel-comment">注釈</button>
+        <button data-cmd="ocr">スキャン補正 / OCR</button>
+        <button data-cmd="compare">ファイルを比較</button>
+        <button data-cmd="protect">保護</button>
+        <button data-cmd="compress">PDFを圧縮</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="help"><button class="menu-btn">ヘルプ(H)</button>
+      <div class="menu-drop">
+        <button data-cmd="shortcuts">キーボードショートカット</button>
+        <button data-cmd="about">PDF Editor Pro について</button>
+      </div>
+    </div>
+  </nav>
+  <span id="doc-title" class="doc-title">文書が開かれていません</span>
+</header>
+
+<!-- ===== クイックツールバー ===== -->
+<div id="toolbar">
+  <button data-cmd="open" title="ファイルを開く (Ctrl+O)">📂</button>
+  <button data-cmd="save" title="保存 (Ctrl+S)">💾</button>
+  <button data-cmd="print" title="印刷 (Ctrl+P)">🖨</button>
+  <span class="sep"></span>
+  <button data-cmd="undo" title="元に戻す (Ctrl+Z)">↩</button>
+  <button data-cmd="redo" title="やり直し (Ctrl+Shift+Z)">↪</button>
+  <span class="sep"></span>
+  <button data-cmd="prevPage" title="前のページ">▲</button>
+  <input id="page-input" type="number" min="1" value="1" title="ページ番号">
+  <span id="page-count">/ 0</span>
+  <button data-cmd="nextPage" title="次のページ">▼</button>
+  <span class="sep"></span>
+  <button data-cmd="zoomOut" title="ズームアウト (Ctrl+-)">−</button>
+  <select id="zoom-select" title="ズーム">
+    <option value="0.5">50%</option><option value="0.75">75%</option>
+    <option value="1" selected>100%</option><option value="1.25">125%</option>
+    <option value="1.5">150%</option><option value="2">200%</option>
+    <option value="4">400%</option>
+    <option value="fit">全体表示</option><option value="width">幅に合わせる</option>
+  </select>
+  <button data-cmd="zoomIn" title="ズームイン (Ctrl++)">＋</button>
+  <span class="sep"></span>
+  <button class="tool-toggle" data-tool="hand" title="手のひらツール (H)">✋</button>
+  <button class="tool-toggle active" data-tool="select" title="選択ツール (V)">⇱</button>
+  <span class="sep"></span>
+  <button class="tool-toggle" data-tool="highlight" title="ハイライト (U)">🖍</button>
+  <button class="tool-toggle" data-tool="note" title="ノート注釈 (Ctrl+6)">💬</button>
+  <button class="tool-toggle" data-tool="draw" title="鉛筆で描画 (D)">✏️</button>
+  <button class="tool-toggle" data-tool="rect" title="長方形">▭</button>
+  <button class="tool-toggle" data-tool="ellipse" title="楕円">◯</button>
+  <button class="tool-toggle" data-tool="line" title="線">╱</button>
+  <button class="tool-toggle" data-tool="freetext" title="テキスト注釈">Ｔ</button>
+  <input type="color" id="annot-color" value="#ffe100" title="注釈の色">
+  <button id="apply-annots" title="注釈をPDFへ適用" class="accent" style="display:none">注釈を適用</button>
+  <span class="spacer"></span>
+  <button data-cmd="find" title="検索 (Ctrl+F)">🔍</button>
+</div>
+
+<!-- ===== 検索バー ===== -->
+<div id="findbar" hidden>
+  <input id="find-input" type="text" placeholder="文書内を検索...">
+  <span id="find-status"></span>
+  <button id="find-prev" title="前を検索 (Shift+Enter)">▲</button>
+  <button id="find-next" title="次を検索 (Enter)">▼</button>
+  <button id="find-close" title="閉じる (Esc)">✕</button>
+</div>
+
+<div id="workspace">
+  <!-- ===== 左パネル: サムネイル ===== -->
+  <aside id="left-panel">
+    <div class="panel-tabs">
+      <button class="active" data-pane="thumbs" title="ページサムネイル">🗐</button>
+    </div>
+    <div id="thumbs" class="pane"></div>
+  </aside>
+
+  <!-- ===== 中央ビューア ===== -->
+  <main id="viewer-container">
+    <div id="viewer"></div>
+    <div id="welcome">
+      <h1>PDF Editor Pro</h1>
+      <p>Acrobat Pro 互換のオフラインPDFエディター</p>
+      <button class="accent big" data-cmd="open">📂 PDFを開く</button>
+      <button class="big" data-cmd="create">✚ ファイルからPDFを作成</button>
+      <p class="hint">ここにファイルをドラッグ&ドロップでも開けます</p>
+    </div>
+  </main>
+
+  <!-- ===== 右ツールパネル ===== -->
+  <aside id="right-panel">
+    <div class="tool-list">
+      <button data-cmd="panel-edit"><i>✏️</i>PDFを編集</button>
+      <button data-cmd="create"><i>📄</i>PDFを作成</button>
+      <button data-cmd="panel-export"><i>📤</i>書き出し</button>
+      <button data-cmd="panel-organize"><i>🗐</i>ページを整理</button>
+      <button data-cmd="combine"><i>🧩</i>ファイルを結合</button>
+      <button data-cmd="panel-comment"><i>💬</i>注釈</button>
+      <button data-cmd="ocr"><i>🔎</i>OCR(テキスト認識)</button>
+      <button data-cmd="compare"><i>⇄</i>ファイルを比較</button>
+      <button data-cmd="protect"><i>🔒</i>保護</button>
+      <button data-cmd="compress"><i>🗜</i>PDFを圧縮</button>
+    </div>
+    <div id="tool-pane"></div>
+  </aside>
+</div>
+
+<!-- ===== ステータスバー ===== -->
+<footer id="statusbar"><span id="status-msg">準備完了</span><span id="status-file"></span></footer>
+
+<!-- ===== 汎用ダイアログ ===== -->
+<div id="dialog-backdrop" hidden>
+  <div id="dialog" role="dialog">
+    <div id="dialog-title" class="dialog-title"></div>
+    <div id="dialog-body" class="dialog-body"></div>
+    <div id="dialog-actions" class="dialog-actions"></div>
+  </div>
+</div>
+
+<!-- 進捗オーバーレイ -->
+<div id="progress-overlay" hidden>
+  <div class="progress-box">
+    <div id="progress-label">処理中...</div>
+    <div class="progress-track"><div id="progress-bar"></div></div>
+  </div>
+</div>
+
+<input type="file" id="file-input" hidden>
+<div id="print-host" hidden></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
