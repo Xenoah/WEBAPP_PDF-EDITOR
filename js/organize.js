@@ -1,7 +1,11 @@
 // ===== ページ整理: 追加・削除・回転・並べ替え・抽出・分割・結合 =====
-import { state, PDFDocument, degrees, applyBytes, getLibDoc, hasDoc } from './state.js';
+import { state, PDFDocument, degrees, applyBytes, getLibDoc, hasDoc, onDocChange } from './state.js';
 import { $, $$, showProgress, hideProgress, setStatus, pickFile, downloadBytes, parsePageRange, showDialog, alertDialog, confirmDialog, baseName } from './utils.js';
 import { fileToPdfBytes } from './convert.js';
+import { gotoPage } from './viewer.js';
+
+// 文書が変化したら(回転/削除/undo等)開いている整理ビューを自動更新
+onDocChange(() => { if (orgActive) renderOrganizeGrid(); });
 
 let selected = new Set();
 let orgActive = false;
@@ -167,8 +171,14 @@ export async function toggleOrganizeView(force) {
 export async function renderOrganizeGrid() {
   if (!orgActive || !state.pdf) return;
   const ov = $('#organize-view');
-  ov.innerHTML = '<div class="org-grid"></div>';
-  const grid = ov.firstChild;
+  ov.innerHTML = `
+    <div class="org-header">
+      <span>ページを整理 — ドラッグで並べ替え / Ctrl+クリックで複数選択 / ダブルクリックでそのページを表示</span>
+      <button id="org-close" class="accent">✕ 整理ビューを閉じる (Esc)</button>
+    </div>
+    <div class="org-grid"></div>`;
+  ov.querySelector('#org-close').addEventListener('click', () => toggleOrganizeView(false));
+  const grid = ov.querySelector('.org-grid');
   selected.clear();
   for (let i = 1; i <= state.pdf.numPages; i++) {
     const page = await state.pdf.getPage(i);
@@ -194,6 +204,11 @@ export async function renderOrganizeGrid() {
     div.appendChild(num);
     grid.appendChild(div);
 
+    div.addEventListener('dblclick', e => {
+      if (e.target.closest('.org-ops')) return;
+      toggleOrganizeView(false);
+      gotoPage(i);
+    });
     div.addEventListener('click', e => {
       if (e.target.closest('.org-ops')) return;
       const idx = i - 1;
@@ -212,7 +227,7 @@ export async function renderOrganizeGrid() {
       if (op === 'ccw') await rotatePages([idx], -90);
       if (op === 'dup') await duplicatePages([idx]);
       if (op === 'del') await deletePages([idx]);
-      await renderOrganizeGrid();
+      // 再描画はonDocChangeが行う
     });
     // ドラッグ&ドロップ並べ替え
     div.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', String(i - 1)));
@@ -231,7 +246,6 @@ export async function renderOrganizeGrid() {
       let to = (i - 1) + (before ? 0 : 1);
       if (from < to) to--;
       await movePage(from, to);
-      await renderOrganizeGrid();
     });
   }
 }

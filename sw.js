@@ -1,7 +1,7 @@
 // ===== Service Worker: 全アセットをキャッシュしてオフライン動作を保証 =====
 // 戦略: アプリ本体(js/css/html)はネットワーク優先(更新を確実に反映)、
 //       vendor/(大容量・不変)はキャッシュ優先。どちらもオフライン時はキャッシュで動作。
-const CACHE = 'pdf-editor-pro-v3';
+const CACHE = 'pdf-editor-pro-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -16,7 +16,7 @@ const ASSETS = [
   './vendor/tesseract.min.js', './vendor/tesseract.worker.min.js',
   './vendor/mammoth.browser.min.js', './vendor/xlsx.full.min.js',
   './vendor/docx.iife.js', './vendor/pptxgen.bundle.js',
-  './vendor/fonts/NotoSansJP-Regular.ttf',
+  './vendor/fonts/ipaexg.ttf',
   './vendor/tessdata/eng.traineddata.gz', './vendor/tessdata/jpn.traineddata.gz',
   // Tesseractコア(SIMD対応版を優先的に使用)
   './vendor/tesseract-core/tesseract-core-simd-lstm.wasm.js',

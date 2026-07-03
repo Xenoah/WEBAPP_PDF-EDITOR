@@ -119,12 +119,14 @@ export function canvasToBytes(canvas, type = 'image/png', quality) {
   });
 }
 
-let notoFontBytes = null;
+// 日本語フォントは必ずTrueType(glyf)形式を使うこと。
+// CFF形式(OTF)はpdf-libのサブセット埋め込みがAcrobat等で描画されないバグがある(pdf.jsでは表示されるため気づきにくい)
+let jpFontBytes = null;
 export async function getJapaneseFont() {
-  if (!notoFontBytes) {
-    const res = await fetch('vendor/fonts/NotoSansJP-Regular.ttf');
+  if (!jpFontBytes) {
+    const res = await fetch('vendor/fonts/ipaexg.ttf');
     if (!res.ok) throw new Error(`日本語フォントの読込に失敗しました (HTTP ${res.status})`);
-    notoFontBytes = await res.arrayBuffer();
+    jpFontBytes = await res.arrayBuffer();
   }
-  return notoFontBytes;
+  return jpFontBytes;
 }

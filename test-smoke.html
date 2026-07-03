@@ -25,7 +25,7 @@ const log = (name, ok, extra = '') => {
   try {
     const doc = await PDFDocument.create();
     doc.registerFontkit(window.fontkit);
-    const fontBytes = await (await fetch('vendor/fonts/NotoSansJP-Regular.ttf')).arrayBuffer();
+    const fontBytes = await (await fetch('vendor/fonts/ipaexg.ttf')).arrayBuffer();
     const font = await doc.embedFont(fontBytes, { subset: true });
     const page = doc.addPage([595, 842]);
     page.drawText('日本語テストABC123', { x: 50, y: 750, size: 24, font, color: rgb(0, 0, 0) });

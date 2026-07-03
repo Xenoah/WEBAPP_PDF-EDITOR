@@ -162,22 +162,22 @@ const commands = {
   prevPage: () => viewer.gotoPage(state.currentPage - 1),
   nextPage: () => viewer.gotoPage(state.currentPage + 1),
 
-  'panel-edit': () => showPane('edit'),
+  'panel-edit': () => { showPane('edit'); organize.toggleOrganizeView(false); },
   'panel-organize': () => { showPane('organize'); if (hasDoc()) organize.toggleOrganizeView(true); },
-  'panel-export': () => showPane('export'),
-  'panel-comment': () => showPane('comment'),
+  'panel-export': () => { showPane('export'); organize.toggleOrganizeView(false); },
+  'panel-comment': () => { showPane('comment'); organize.toggleOrganizeView(false); },
 
-  'tool-editText': () => hasDoc() && edit.setEditMode(true),
+  'tool-editText': () => { if (hasDoc()) { organize.toggleOrganizeView(false); edit.setEditMode(true); } },
   'tool-editOff': () => edit.setEditMode(false),
   'tool-addText': () => hasDoc() && edit.startAddText(),
   'tool-addImage': () => hasDoc() && edit.startAddImage(),
 
   'org-view': () => hasDoc() && organize.toggleOrganizeView(),
-  'org-rotate-l': async () => { if (hasDoc()) { await organize.rotatePages(organize.getSelectedPages(), -90); organize.renderOrganizeGrid(); } },
-  'org-rotate-r': async () => { if (hasDoc()) { await organize.rotatePages(organize.getSelectedPages(), 90); organize.renderOrganizeGrid(); } },
-  'org-delete': async () => { if (hasDoc()) { await organize.deletePages(organize.getSelectedPages()); organize.renderOrganizeGrid(); } },
-  'org-insert-blank': async () => { if (hasDoc()) { await organize.insertBlankPage(state.currentPage); organize.renderOrganizeGrid(); } },
-  'org-insert-file': async () => { if (hasDoc()) { await organize.insertFromFile(state.currentPage); organize.renderOrganizeGrid(); } },
+  'org-rotate-l': async () => { if (hasDoc()) await organize.rotatePages(organize.getSelectedPages(), -90); },
+  'org-rotate-r': async () => { if (hasDoc()) await organize.rotatePages(organize.getSelectedPages(), 90); },
+  'org-delete': async () => { if (hasDoc()) await organize.deletePages(organize.getSelectedPages()); },
+  'org-insert-blank': async () => { if (hasDoc()) await organize.insertBlankPage(state.currentPage); },
+  'org-insert-file': async () => { if (hasDoc()) await organize.insertFromFile(state.currentPage); },
   'org-extract': async () => {
     if (!hasDoc()) return;
     const pages = organize.getSelectedPages();
@@ -186,7 +186,7 @@ const commands = {
       { label: '抽出後に削除', value: 'remove' },
       { label: '抽出', accent: true, value: 'keep' },
     ]);
-    if (del) { await organize.extractPages(pages, del === 'remove'); organize.renderOrganizeGrid(); }
+    if (del) await organize.extractPages(pages, del === 'remove');
   },
   'org-split': () => hasDoc() && organize.splitDocument(),
   combine: () => organize.combineFiles(),
@@ -314,7 +314,7 @@ document.addEventListener('keydown', e => {
     else if (k === 'v') setTool('select');
     else if (k === 'u') setTool('highlight');
     else if (k === 'd') setTool('draw');
-    else if (e.key === 'Escape') { closeFindbar(); setTool('select'); }
+    else if (e.key === 'Escape') { closeFindbar(); setTool('select'); organize.toggleOrganizeView(false); }
   }
 });
 

@@ -146,6 +146,13 @@ button.big { font-size: 16px; padding: 12px 26px; border: 1px solid var(--border
 
 /* ===== 整理ビュー(ページを整理) ===== */
 #organize-view { display: none; flex: 1; overflow: auto; padding: 20px; }
+.org-header {
+  position: sticky; top: -20px; z-index: 20; margin: -20px -20px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--bar-bg); border-bottom: 1px solid #202124; padding: 10px 16px;
+  font-size: 12px; opacity: .95;
+}
+.org-header button { white-space: nowrap; }
 #organize-view.active { display: block; }
 #viewer-container.organize-mode #viewer { display: none; }
 .org-grid { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
