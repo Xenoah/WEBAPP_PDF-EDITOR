@@ -1,5 +1,7 @@
 /* ===== PDF Editor Pro — Acrobat Pro DC 風テーマ ===== */
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* hidden属性を常に優先(#progress-overlay等のdisplay:flexがUAスタイルの[hidden]を上書きしてしまうのを防ぐ) */
+[hidden] { display: none !important; }
 :root {
   --bar-bg: #323639; --bar-bg2: #3c4043; --bar-fg: #e8eaed;
   --accent: #1a73e8; --accent-hot: #0b57d0;
