@@ -76,3 +76,4 @@ node server.js 8123   # 起動後、ブラウザで http://localhost:8123/test-s
 - 2026-07-04: スモークテスト4項目すべてPASS(日本語フォントPDF作成 55KB / テキスト抽出「日本語テストABC123」一致 / PasswordException→パスワード再読込OK / OCR "HELLO WORLD" 認識)。メインページはヘッドレスEdgeで全モジュールロード完了を確認。
 - 2026-07-04: 「処理中のまま進まない」バグ修正。原因=進捗オーバーレイがダイアログを覆うデッドロック(結合/圧縮/OCRの完了時に発生)。併せて: OCR進捗%表示、書き出し/注釈適用/挿入/結合にエラーダイアログ追加、フォント取得のHTTPエラー検出、SWをネットワーク優先(アプリ本体)へ変更(v2)。
 - 2026-07-04: 初回起動時から「処理中...」が全画面表示される致命バグ修正(`[hidden]`とCSS displayの優先度問題)。ヘッドレスEdgeのスクリーンショットで起動画面の正常表示を確認済み。
+- 2026-07-04: 上記が旧Service Worker(v1・全キャッシュ優先)配下のユーザーに届かない問題への多重防御を追加: ①overlay/dialog/findbarへインライン`style="display:none"`(古いCSSでも隠れる) ②表示切替をhidden属性+style.display両方で実施(utils.js/main.js) ③起動時に`hideProgress()`+`closeDialog()`を強制実行 ④SW登録時に`reg.update()`で即更新チェック ⑤キャッシュ名v3へバンプ。**リカバリ手順**: サーバー起動状態で開く→新SWが自動インストール→もう一度リロード。それでもダメならDevTools→Application→サイトデータをクリア。

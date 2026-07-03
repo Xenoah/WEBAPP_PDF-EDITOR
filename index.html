@@ -138,7 +138,7 @@
 </div>
 
 <!-- ===== 検索バー ===== -->
-<div id="findbar" hidden>
+<div id="findbar" hidden style="display:none">
   <input id="find-input" type="text" placeholder="文書内を検索...">
   <span id="find-status"></span>
   <button id="find-prev" title="前を検索 (Shift+Enter)">▲</button>
@@ -189,7 +189,7 @@
 <footer id="statusbar"><span id="status-msg">準備完了</span><span id="status-file"></span></footer>
 
 <!-- ===== 汎用ダイアログ ===== -->
-<div id="dialog-backdrop" hidden>
+<div id="dialog-backdrop" hidden style="display:none">
   <div id="dialog" role="dialog">
     <div id="dialog-title" class="dialog-title"></div>
     <div id="dialog-body" class="dialog-body"></div>
@@ -197,8 +197,8 @@
   </div>
 </div>
 
-<!-- 進捗オーバーレイ -->
-<div id="progress-overlay" hidden>
+<!-- 進捗オーバーレイ (インラインstyleで初期非表示を保証 — CSSキャッシュが古くても隠れる) -->
+<div id="progress-overlay" hidden style="display:none">
   <div class="progress-box">
     <div id="progress-label">処理中...</div>
     <div class="progress-track"><div id="progress-bar"></div></div>

@@ -1,7 +1,7 @@
 // ===== Service Worker: 全アセットをキャッシュしてオフライン動作を保証 =====
 // 戦略: アプリ本体(js/css/html)はネットワーク優先(更新を確実に反映)、
 //       vendor/(大容量・不変)はキャッシュ優先。どちらもオフライン時はキャッシュで動作。
-const CACHE = 'pdf-editor-pro-v2';
+const CACHE = 'pdf-editor-pro-v3';
 const ASSETS = [
   './',
   './index.html',

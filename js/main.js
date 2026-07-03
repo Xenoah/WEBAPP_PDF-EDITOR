@@ -1,6 +1,6 @@
 // ===== PDF Editor Pro — エントリポイント / コマンド配線 =====
 import { state, loadBytes, undo, redo, hasDoc } from './state.js';
-import { $, $$, setStatus, pickFile, downloadBytes, showDialog, alertDialog, baseName } from './utils.js';
+import { $, $$, setStatus, pickFile, downloadBytes, showDialog, alertDialog, baseName, hideProgress, closeDialog } from './utils.js';
 import * as viewer from './viewer.js';
 import * as organize from './organize.js';
 import * as annotate from './annotate.js';
@@ -148,7 +148,7 @@ const commands = {
 
   undo: async () => { await undo() ? setStatus('元に戻しました') : setStatus('元に戻す操作はありません'); },
   redo: async () => { await redo() ? setStatus('やり直しました') : setStatus('やり直す操作はありません'); },
-  find: () => { $('#findbar').hidden = false; $('#find-input').focus(); $('#find-input').select(); },
+  find: () => { const fb = $('#findbar'); fb.hidden = false; fb.style.display = 'flex'; $('#find-input').focus(); $('#find-input').select(); },
 
   zoomIn: () => viewer.zoomBy(1.25),
   zoomOut: () => viewer.zoomBy(0.8),
@@ -285,7 +285,7 @@ $('#find-input').addEventListener('input', e => {
 $('#find-next').addEventListener('click', () => viewer.findNext(1));
 $('#find-prev').addEventListener('click', () => viewer.findNext(-1));
 $('#find-close').addEventListener('click', closeFindbar);
-function closeFindbar() { $('#findbar').hidden = true; viewer.clearSearch(); }
+function closeFindbar() { const fb = $('#findbar'); fb.hidden = true; fb.style.display = 'none'; viewer.clearSearch(); }
 
 // ---------- キーボードショートカット ----------
 document.addEventListener('keydown', e => {
@@ -352,9 +352,15 @@ $('#viewer-container').addEventListener('wheel', e => {
   viewer.zoomBy(e.deltaY < 0 ? 1.1 : 0.9);
 }, { passive: false });
 
+// ---------- 起動時の自己修復 ----------
+// 古いキャッシュ由来のCSSでオーバーレイが出っぱなしになる事故に備え、起動時に強制的に閉じる
+hideProgress();
+closeDialog();
+
 // ---------- Service Worker(オフライン対応) ----------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').then(() => {
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    reg.update(); // 旧バージョンのSWが残っていても即座に更新チェック
     console.log('Service Worker registered — オフラインで利用可能');
   }).catch(err => console.warn('SW registration failed:', err));
 }

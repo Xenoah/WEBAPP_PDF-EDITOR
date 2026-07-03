@@ -4,17 +4,18 @@ export const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 export function setStatus(msg) { $('#status-msg').textContent = msg; }
 
-let progressDepth = 0;
+// 表示制御はhidden属性とstyle.displayの両方で行う(古いCSSがキャッシュされていても確実に隠すため)
 export function showProgress(label, ratio = null) {
-  progressDepth = 1;
   const ov = $('#progress-overlay');
   ov.hidden = false;
+  ov.style.display = 'flex';
   $('#progress-label').textContent = label;
   $('#progress-bar').style.width = ratio == null ? '100%' : `${Math.round(ratio * 100)}%`;
 }
 export function hideProgress() {
-  progressDepth = 0;
-  $('#progress-overlay').hidden = true;
+  const ov = $('#progress-overlay');
+  ov.hidden = true;
+  ov.style.display = 'none';
 }
 
 // ---- ダイアログ ----
@@ -39,12 +40,18 @@ export function showDialog(title, bodyHTML, actions) {
       });
       act.appendChild(b);
     }
-    $('#dialog-backdrop').hidden = false;
+    const bd = $('#dialog-backdrop');
+    bd.hidden = false;
+    bd.style.display = 'flex';
     const first = $('#dialog-body input, #dialog-body select, #dialog-body button');
     if (first) first.focus();
   });
 }
-export function closeDialog() { $('#dialog-backdrop').hidden = true; }
+export function closeDialog() {
+  const bd = $('#dialog-backdrop');
+  bd.hidden = true;
+  bd.style.display = 'none';
+}
 
 export function alertDialog(title, msg) {
   return showDialog(title, `<p style="line-height:1.7">${msg}</p>`, [{ label: 'OK', accent: true }]);
