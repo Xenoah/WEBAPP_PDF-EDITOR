@@ -14,7 +14,13 @@ export function init() {
 export function isEditMode() { return state.tool === 'edit'; }
 
 export async function setEditMode(on) {
+  if (on && !state.pdf) {
+    state.tool = 'select';
+    syncToolbarTool();
+    return false;
+  }
   state.tool = on ? 'edit' : 'select';
+  syncToolbarTool();
   subTool = null;
   $$('.edit-layer').forEach(l => l.remove());
   if (on) {
@@ -26,10 +32,11 @@ export async function setEditMode(on) {
   } else {
     setStatus('準備完了');
   }
+  return true;
 }
 
 export async function startAddText() {
-  if (!isEditMode()) await setEditMode(true);
+  if (!isEditMode() && !await setEditMode(true)) return;
   subTool = 'addText';
   setStatus('テキストを追加: 挿入したい位置をクリックしてください');
 }
@@ -37,13 +44,17 @@ export async function startAddText() {
 export async function startAddImage() {
   const file = await pickFile('.png,.jpg,.jpeg,.bmp,.gif,.webp');
   if (!file) return;
-  if (!isEditMode()) await setEditMode(true);
+  if (!isEditMode() && !await setEditMode(true)) return;
   pendingImageFile = file;
   subTool = 'addImage';
   setStatus('画像を追加: 配置したい位置をクリックしてください');
 }
 
 // ---------- 編集レイヤー ----------
+function syncToolbarTool() {
+  $$('#toolbar .tool-toggle').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
+}
+
 async function mountEditLayer(pageIndex, wrap, viewport) {
   if (!isEditMode()) return;
   wrap.querySelector('.edit-layer')?.remove();

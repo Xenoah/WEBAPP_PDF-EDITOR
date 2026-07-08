@@ -4,6 +4,32 @@ export const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 export function setStatus(msg) { $('#status-msg').textContent = msg; }
 
+export function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[ch]);
+}
+
+export function sanitizeHTML(html) {
+  const template = document.createElement('template');
+  template.innerHTML = String(html ?? '');
+  template.content.querySelectorAll('script').forEach(el => el.remove());
+  template.content.querySelectorAll('*').forEach(el => {
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().replace(/[\u0000-\u001f\u007f\s]+/g, '');
+      if (name.startsWith('on') || ((name === 'href' || name === 'src' || name === 'xlink:href') && /^javascript:/i.test(value))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return template.innerHTML;
+}
+
 // 表示制御はhidden属性とstyle.displayの両方で行う(古いCSSがキャッシュされていても確実に隠すため)
 export function showProgress(label, ratio = null) {
   const ov = $('#progress-overlay');
@@ -53,11 +79,13 @@ export function closeDialog() {
   bd.style.display = 'none';
 }
 
-export function alertDialog(title, msg) {
-  return showDialog(title, `<p style="line-height:1.7">${msg}</p>`, [{ label: 'OK', accent: true }]);
+export function alertDialog(title, msg, { html = false } = {}) {
+  const safeMsg = html ? sanitizeHTML(msg) : escapeHTML(msg);
+  return showDialog(title, `<p style="line-height:1.7">${safeMsg}</p>`, [{ label: 'OK', accent: true }]);
 }
-export function confirmDialog(title, msg) {
-  return showDialog(title, `<p style="line-height:1.7">${msg}</p>`,
+export function confirmDialog(title, msg, { html = false } = {}) {
+  const safeMsg = html ? sanitizeHTML(msg) : escapeHTML(msg);
+  return showDialog(title, `<p style="line-height:1.7">${safeMsg}</p>`,
     [{ label: 'キャンセル', value: false }, { label: 'OK', accent: true, value: true }]);
 }
 
@@ -114,8 +142,14 @@ export function parsePageRange(str, pageCount) {
 
 // canvas → Uint8Array (PNG/JPEG)
 export function canvasToBytes(canvas, type = 'image/png', quality) {
-  return new Promise(resolve => {
-    canvas.toBlob(async blob => resolve(new Uint8Array(await blob.arrayBuffer())), type, quality);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(async blob => {
+      if (!blob) {
+        reject(new Error('Canvas image export failed.'));
+        return;
+      }
+      resolve(new Uint8Array(await blob.arrayBuffer()));
+    }, type, quality);
   });
 }
 

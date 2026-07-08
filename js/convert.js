@@ -1,6 +1,6 @@
 // ===== 変換: Office/画像→PDF 作成、PDF→Office/画像 書き出し =====
 import { state, PDFDocument, rgb, hasDoc } from './state.js';
-import { $, showProgress, hideProgress, setStatus, downloadBytes, canvasToBytes, baseName, getJapaneseFont, alertDialog } from './utils.js';
+import { $, showProgress, hideProgress, setStatus, downloadBytes, canvasToBytes, baseName, getJapaneseFont, alertDialog, escapeHTML, sanitizeHTML } from './utils.js';
 import { getTextContent } from './viewer.js';
 
 // ---------- 共通: ページ→canvas ----------
@@ -62,7 +62,7 @@ async function htmlToPdfBytes(html, { landscape = false } = {}) {
   const host = document.createElement('div');
   host.style.cssText = `position:fixed;left:-99999px;top:0;width:${contentW}px;background:#fff;color:#000;font-family:"Yu Gothic","Hiragino Sans",Meiryo,sans-serif;font-size:14px;line-height:1.6;`;
   host.innerHTML = `<style>table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:3px 6px;font-size:12px}img{max-width:100%}h1,h2,h3,p,ul,ol,table{margin:0 0 10px}</style><div id="__content"></div>`;
-  host.querySelector('#__content').innerHTML = html;
+  host.querySelector('#__content').innerHTML = sanitizeHTML(html);
   document.body.appendChild(host);
   const content = host.querySelector('#__content');
   await new Promise(r => setTimeout(r, 30));
@@ -128,7 +128,7 @@ async function xlsxToPdf(buf) {
   const wb = window.XLSX.read(buf, { type: 'array' });
   let html = '';
   for (const name of wb.SheetNames) {
-    html += `<h2 style="font-size:16px">${name}</h2>` + window.XLSX.utils.sheet_to_html(wb.Sheets[name], { header: '', footer: '' });
+    html += `<h2 style="font-size:16px">${escapeHTML(name)}</h2>` + window.XLSX.utils.sheet_to_html(wb.Sheets[name], { header: '', footer: '' });
   }
   return htmlToPdfBytes(html, { landscape: true });
 }

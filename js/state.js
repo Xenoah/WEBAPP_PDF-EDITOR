@@ -22,16 +22,28 @@ export const state = {
   undoStack: [],
   redoStack: [],
   listeners: new Set(),
+  docGeneration: 0,
 };
 
 export function onDocChange(fn) { state.listeners.add(fn); }
 function emit() { for (const fn of state.listeners) fn(); }
+
+export function resetDocumentScope({ keepPassword = false } = {}) {
+  state.currentPage = 1;
+  state.zoom = 1;
+  state.zoomMode = 'value';
+  state.viewRotation = 0;
+  state.tool = 'select';
+  if (!keepPassword) state.password = null;
+  state.pendingAnnots = [];
+}
 
 // PDFバイト列を読み込み、pdf.jsドキュメントを更新する
 export async function loadBytes(bytes, { fileName, password, resetHistory = false } = {}) {
   const task = pdfjsLib.getDocument({ data: bytes.slice(), password: password ?? state.password ?? undefined });
   const pdf = await task.promise;
   if (state.pdf) state.pdf.destroy();
+  if (resetHistory) resetDocumentScope({ keepPassword: password !== undefined });
   state.bytes = bytes;
   state.pdf = pdf;
   if (fileName) state.fileName = fileName;
@@ -39,8 +51,21 @@ export async function loadBytes(bytes, { fileName, password, resetHistory = fals
   if (resetHistory) { state.undoStack = []; state.redoStack = []; state.pendingAnnots = []; }
   if (state.currentPage > pdf.numPages) state.currentPage = pdf.numPages;
   if (state.currentPage < 1) state.currentPage = 1;
+  state.docGeneration++;
   emit();
   return pdf;
+}
+
+export function closeDocument() {
+  if (state.pdf) state.pdf.destroy();
+  state.pdf = null;
+  state.bytes = null;
+  state.fileName = 'untitled.pdf';
+  state.undoStack = [];
+  state.redoStack = [];
+  resetDocumentScope();
+  state.docGeneration++;
+  emit();
 }
 
 // 変更を適用(undo履歴に積む)

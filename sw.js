@@ -1,7 +1,6 @@
-// ===== Service Worker: 全アセットをキャッシュしてオフライン動作を保証 =====
-// 戦略: アプリ本体(js/css/html)はネットワーク優先(更新を確実に反映)、
-//       vendor/(大容量・不変)はキャッシュ優先。どちらもオフライン時はキャッシュで動作。
-const CACHE = 'pdf-editor-pro-v4';
+// Service Worker for offline app assets.
+// App shell is network-first; explicit vendor assets are cache-first.
+const CACHE = 'pdf-editor-pro-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -18,12 +17,26 @@ const ASSETS = [
   './vendor/docx.iife.js', './vendor/pptxgen.bundle.js',
   './vendor/fonts/ipaexg.ttf',
   './vendor/tessdata/eng.traineddata.gz', './vendor/tessdata/jpn.traineddata.gz',
-  // Tesseractコア(SIMD対応版を優先的に使用)
   './vendor/tesseract-core/tesseract-core-simd-lstm.wasm.js',
+  './vendor/tesseract-core/tesseract-core-simd-lstm.wasm',
   './vendor/tesseract-core/tesseract-core-simd.wasm.js',
+  './vendor/tesseract-core/tesseract-core-simd.wasm',
   './vendor/tesseract-core/tesseract-core-lstm.wasm.js',
+  './vendor/tesseract-core/tesseract-core-lstm.wasm',
   './vendor/tesseract-core/tesseract-core.wasm.js',
+  './vendor/tesseract-core/tesseract-core.wasm',
+  './vendor/tesseract-core/tesseract-core-relaxedsimd-lstm.wasm.js',
+  './vendor/tesseract-core/tesseract-core-relaxedsimd-lstm.wasm',
+  './vendor/tesseract-core/tesseract-core-relaxedsimd.wasm.js',
+  './vendor/tesseract-core/tesseract-core-relaxedsimd.wasm',
 ];
+
+const normalizedAssetPaths = new Set(
+  ASSETS.map(asset => new URL(asset, self.location.href).pathname)
+);
+const vendorCachePaths = new Set(
+  [...normalizedAssetPaths].filter(path => path.startsWith('/vendor/'))
+);
 
 self.addEventListener('install', e => {
   e.waitUntil(
@@ -44,6 +57,10 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
 
+  const isAppAsset = normalizedAssetPaths.has(url.pathname);
+  const isVendorAsset = vendorCachePaths.has(url.pathname);
+  if (!isAppAsset && !isVendorAsset) return;
+
   const cachePut = res => {
     if (res && res.ok) {
       const clone = res.clone();
@@ -52,15 +69,14 @@ self.addEventListener('fetch', e => {
     return res;
   };
 
-  if (url.pathname.includes('/vendor/')) {
-    // vendor: キャッシュ優先(不変・大容量)
+  if (isVendorAsset) {
     e.respondWith(
       caches.match(e.request).then(hit => hit || fetch(e.request).then(cachePut))
     );
-  } else {
-    // アプリ本体: ネットワーク優先(修正の即時反映)、オフライン時はキャッシュ
-    e.respondWith(
-      fetch(e.request).then(cachePut).catch(() => caches.match(e.request))
-    );
+    return;
   }
+
+  e.respondWith(
+    fetch(e.request).then(cachePut).catch(() => caches.match(e.request))
+  );
 });

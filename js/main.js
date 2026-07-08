@@ -1,6 +1,6 @@
 // ===== PDF Editor Pro — エントリポイント / コマンド配線 =====
-import { state, loadBytes, undo, redo, hasDoc } from './state.js';
-import { $, $$, setStatus, pickFile, downloadBytes, showDialog, alertDialog, baseName, hideProgress, closeDialog } from './utils.js';
+import { state, loadBytes, undo, redo, hasDoc, closeDocument } from './state.js';
+import { $, $$, setStatus, pickFile, downloadBytes, showDialog, alertDialog, baseName, hideProgress, closeDialog, escapeHTML } from './utils.js';
 import * as viewer from './viewer.js';
 import * as organize from './organize.js';
 import * as annotate from './annotate.js';
@@ -32,7 +32,7 @@ async function openPdfBytes(bytes, name, password = null) {
   } catch (e) {
     if (e?.name === 'PasswordException') {
       const pw = await showDialog('パスワードが必要です', `
-        <p style="margin-bottom:8px">「${name}」は保護されています。${password !== null ? '<br><b style="color:#ff8a80">パスワードが正しくありません。</b>' : ''}</p>
+        <p style="margin-bottom:8px">「${escapeHTML(name)}」は保護されています。${password !== null ? '<br><b style="color:#ff8a80">パスワードが正しくありません。</b>' : ''}</p>
         <label>パスワード</label><input type="password" id="open-pw">
       `, [
         { label: 'キャンセル', value: null },
@@ -46,24 +46,37 @@ async function openPdfBytes(bytes, name, password = null) {
 }
 
 // ---------- 保存 ----------
-function saveFile() {
-  if (!hasDoc()) return;
+async function saveFile() {
+  if (!hasDoc()) return false;
+  if (state.pendingAnnots.length) {
+    const action = await showDialog('未適用の注釈があります', `
+      <p style="line-height:1.7">画面上の注釈は、まだPDF本体に書き込まれていません。保存前に適用しますか?</p>
+    `, [
+      { label: 'キャンセル', value: null },
+      { label: 'そのまま保存', value: 'raw' },
+      { label: '適用して保存', accent: true, value: 'apply' },
+    ]);
+    if (!action) return false;
+    if (action === 'apply') await annotate.applyAnnotations();
+  }
   downloadBytes(state.bytes, state.fileName);
-  setStatus(`${state.fileName} を保存しました`);
+  setStatus(`${state.fileName} saved.`);
+  return true;
 }
 async function saveAs() {
-  if (!hasDoc()) return;
+  if (!hasDoc()) return false;
   const name = await showDialog('名前を付けて保存', `
     <label>ファイル名</label>
-    <input type="text" id="save-name" value="${baseName(state.fileName)}.pdf">
+    <input type="text" id="save-name" value="${escapeHTML(baseName(state.fileName))}.pdf">
   `, [
     { label: 'キャンセル', value: null },
     { label: '保存', accent: true, onClick: b => b.querySelector('#save-name').value },
   ]);
   if (!name) return;
+  const prevName = state.fileName;
   state.fileName = name.endsWith('.pdf') ? name : name + '.pdf';
-  saveFile();
-  $('#doc-title').textContent = state.fileName;
+  if (await saveFile()) $('#doc-title').textContent = state.fileName;
+  else state.fileName = prevName;
 }
 
 // ---------- ツールパネル ----------
@@ -136,11 +149,9 @@ const commands = {
   save: saveFile,
   saveAs,
   close: async () => {
-    if (!hasDoc()) return;
-    state.pdf.destroy();
-    state.pdf = null; state.bytes = null;
-    state.undoStack = []; state.redoStack = []; state.pendingAnnots = [];
-    await viewer.refresh();
+    if (!hasDoc()) return false;
+    closeDocument();
+    setTool('select');
     setStatus('文書を閉じました');
   },
   print: () => viewer.printDocument(),
@@ -179,7 +190,7 @@ const commands = {
   'org-insert-blank': async () => { if (hasDoc()) await organize.insertBlankPage(state.currentPage); },
   'org-insert-file': async () => { if (hasDoc()) await organize.insertFromFile(state.currentPage); },
   'org-extract': async () => {
-    if (!hasDoc()) return;
+    if (!hasDoc()) return false;
     const pages = organize.getSelectedPages();
     const del = await showDialog('ページを抽出', `${pages.map(p => p + 1).join(', ')}ページ目を新しいPDFとして抽出します。`, [
       { label: 'キャンセル', value: null },
@@ -220,7 +231,7 @@ const commands = {
       <tr><td>Esc</td><td>検索バー・ツールを閉じる</td></tr>
     </table>
   `, [{ label: '閉じる', accent: true }]),
-  about: () => alertDialog('PDF Editor Pro', 'Acrobat Pro互換のオフラインWebPDFエディター<br>pdf.js / pdf-lib / Tesseract.js を使用。すべての処理はブラウザ内で完結し、ファイルが外部へ送信されることはありません。'),
+  about: () => alertDialog('PDF Editor Pro', 'Acrobat Pro互換のオフラインWebPDFエディター<br>pdf.js / pdf-lib / Tesseract.js を使用。すべての処理はブラウザ内で完結し、ファイルが外部へ送信されることはありません。', { html: true }),
 };
 
 // ---------- イベント配線 ----------
@@ -269,7 +280,14 @@ $$('.menu-btn').forEach(btn => {
 });
 
 // ページ番号・ズーム
-$('#page-input').addEventListener('change', e => viewer.gotoPage(+e.target.value));
+$('#page-input').addEventListener('change', e => {
+  const page = Number.parseInt(e.target.value, 10);
+  if (!Number.isFinite(page)) {
+    e.target.value = state.currentPage;
+    return;
+  }
+  viewer.gotoPage(page);
+});
 $('#zoom-select').addEventListener('change', e => viewer.setZoom(e.target.value));
 
 // 検索バー

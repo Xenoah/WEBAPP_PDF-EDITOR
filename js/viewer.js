@@ -9,6 +9,8 @@ let pageViews = [];        // {wrap, canvas, textLayerDiv, annotLayer, rendered,
 let observer = null;
 let textCache = [];        // ページごとの getTextContent キャッシュ
 let searchState = { query: '', matches: [], index: -1 };
+let renderGeneration = 0;
+let zoomGeneration = 0;
 export let overlayHooks = [];  // 各ページ描画後に呼ばれる (pageIndex, wrap, viewport)
 
 export function addOverlayHook(fn) { overlayHooks.push(fn); }
@@ -20,6 +22,7 @@ export function init() {
 
 // ---------- レイアウト ----------
 export async function refresh() {
+  const generation = ++renderGeneration;
   const v = viewer();
   v.innerHTML = '';
   pageViews = [];
@@ -28,42 +31,51 @@ export async function refresh() {
   if (!state.pdf) {
     $('#welcome').style.display = '';
     $('#page-count').textContent = '/ 0';
+    $('#page-input').value = 1;
+    $('#page-input').max = 0;
+    $('#zoom-select').value = '1';
     $('#thumbs').innerHTML = '';
     $('#doc-title').textContent = '文書が開かれていません';
     $('#status-file').textContent = '';
     return;
   }
+  const pdf = state.pdf;
   $('#welcome').style.display = 'none';
   $('#doc-title').textContent = state.fileName;
   $('#status-file').textContent = `${state.fileName} — ${state.pdf.numPages}ページ`;
   $('#page-count').textContent = `/ ${state.pdf.numPages}`;
   $('#page-input').max = state.pdf.numPages;
 
-  const scale = await effectiveScale();
+  const scale = await effectiveScale(generation);
+  if (!isCurrentGeneration(generation, pdf)) return;
   observer = new IntersectionObserver(entries => {
-    for (const e of entries) if (e.isIntersecting) renderPage(+e.target.dataset.page);
+    for (const e of entries) if (e.isIntersecting) renderPage(+e.target.dataset.page, generation);
   }, { root: container(), rootMargin: '600px 0px' });
 
-  for (let i = 1; i <= state.pdf.numPages; i++) {
-    const page = await state.pdf.getPage(i);
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    if (!isCurrentGeneration(generation, pdf)) return;
     const viewport = page.getViewport({ scale, rotation: (page.rotate + state.viewRotation) % 360 });
     const wrap = document.createElement('div');
     wrap.className = 'page-wrap';
     wrap.dataset.page = i;
     wrap.style.width = `${viewport.width}px`;
     wrap.style.height = `${viewport.height}px`;
+    if (!isCurrentGeneration(generation, pdf)) return;
     v.appendChild(wrap);
     pageViews.push({ wrap, viewport, page, rendered: false });
     observer.observe(wrap);
   }
-  renderThumbs();
+  renderThumbs(generation, pdf);
   updatePageUI();
   if (searchState.query) runSearch(searchState.query, true);
 }
 
-async function effectiveScale() {
-  if (!state.pdf) return 1;
-  const page = await state.pdf.getPage(1);
+async function effectiveScale(generation = renderGeneration) {
+  const pdf = state.pdf;
+  if (!pdf) return 1;
+  const page = await pdf.getPage(1);
+  if (!isCurrentGeneration(generation) || pdf !== state.pdf) return state.zoom;
   const vp = page.getViewport({ scale: 1, rotation: (page.rotate + state.viewRotation) % 360 });
   const cw = container().clientWidth - 48, ch = container().clientHeight - 48;
   if (state.zoomMode === 'fit') state.zoom = Math.min(cw / vp.width, ch / vp.height);
@@ -71,9 +83,13 @@ async function effectiveScale() {
   return state.zoom;
 }
 
-async function renderPage(num) {
+function isCurrentGeneration(generation, pdf = state.pdf) {
+  return generation === renderGeneration && pdf === state.pdf;
+}
+
+async function renderPage(num, generation = renderGeneration) {
   const pv = pageViews[num - 1];
-  if (!pv || pv.rendered) return;
+  if (!pv || pv.rendered || !isCurrentGeneration(generation)) return;
   pv.rendered = true;
   const { page, viewport, wrap } = pv;
   const canvas = document.createElement('canvas');
@@ -85,12 +101,14 @@ async function renderPage(num) {
   canvas.style.height = `${viewport.height}px`;
   wrap.appendChild(canvas);
   await page.render({ canvasContext: canvas.getContext('2d'), viewport, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null }).promise;
+  if (!isCurrentGeneration(generation)) return;
 
   // テキストレイヤー(選択・検索用)
   const tl = document.createElement('div');
   tl.className = 'text-layer';
   wrap.appendChild(tl);
   const tc = await getTextContent(num);
+  if (!isCurrentGeneration(generation)) return;
   for (const item of tc.items) {
     if (!item.str || !item.str.trim()) continue;
     const span = document.createElement('span');
@@ -115,6 +133,7 @@ async function renderPage(num) {
   }
 
   // 注釈・編集レイヤー用フック
+  if (!isCurrentGeneration(generation)) return;
   for (const hook of overlayHooks) hook(num - 1, wrap, viewport);
   if (searchState.query) paintMatchesOnPage(num - 1);
 }
@@ -130,11 +149,13 @@ export async function getTextContent(pageNum) {
 export function getPageView(pageIndex) { return pageViews[pageIndex]; }
 
 // ---------- サムネイル ----------
-async function renderThumbs() {
+async function renderThumbs(generation = renderGeneration, pdf = state.pdf) {
   const el = $('#thumbs');
   el.innerHTML = '';
-  for (let i = 1; i <= state.pdf.numPages; i++) {
-    const page = await state.pdf.getPage(i);
+  if (!pdf) return;
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    if (!isCurrentGeneration(generation, pdf)) return;
     const vp = page.getViewport({ scale: 130 / page.getViewport({ scale: 1 }).width, rotation: (page.rotate + state.viewRotation) % 360 });
     const div = document.createElement('div');
     div.className = 'thumb' + (i === state.currentPage ? ' current' : '');
@@ -146,6 +167,7 @@ async function renderThumbs() {
     num.className = 'thumb-num'; num.textContent = i;
     div.appendChild(num);
     div.addEventListener('click', () => gotoPage(i));
+    if (!isCurrentGeneration(generation, pdf)) return;
     el.appendChild(div);
     page.render({ canvasContext: c.getContext('2d'), viewport: vp });
   }
@@ -154,6 +176,11 @@ async function renderThumbs() {
 // ---------- ナビゲーション ----------
 export function gotoPage(n) {
   if (!state.pdf) return;
+  n = Number.parseInt(n, 10);
+  if (!Number.isFinite(n)) {
+    updatePageUI();
+    return;
+  }
   n = Math.max(1, Math.min(state.pdf.numPages, n));
   state.currentPage = n;
   pageViews[n - 1]?.wrap.scrollIntoView({ block: 'start' });
@@ -173,22 +200,30 @@ function onScroll() {
 }
 
 function updatePageUI() {
+  if (!Number.isFinite(state.currentPage)) state.currentPage = 1;
   $('#page-input').value = state.currentPage;
   $$('#thumbs .thumb').forEach(t => t.classList.toggle('current', +t.dataset.page === state.currentPage));
 }
 
 // ---------- ズーム ----------
 export async function setZoom(modeOrValue) {
+  const generation = ++zoomGeneration;
   if (modeOrValue === 'fit' || modeOrValue === 'width') state.zoomMode = modeOrValue;
-  else { state.zoomMode = 'value'; state.zoom = +modeOrValue; }
+  else {
+    const zoom = Number.parseFloat(modeOrValue);
+    if (!Number.isFinite(zoom)) return;
+    state.zoomMode = 'value';
+    state.zoom = zoom;
+  }
   const keep = state.currentPage;
   await refresh();
+  if (generation !== zoomGeneration) return;
   gotoPage(keep);
   syncZoomSelect();
 }
 export function zoomBy(f) {
   state.zoomMode = 'value';
-  setZoom(Math.max(0.25, Math.min(6, state.zoom * f)));
+  return setZoom(Math.max(0.25, Math.min(6, state.zoom * f)));
 }
 function syncZoomSelect() {
   const sel = $('#zoom-select');

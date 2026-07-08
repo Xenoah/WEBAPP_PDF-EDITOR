@@ -1,6 +1,6 @@
 // ===== 保護(パスワード・権限)/ 圧縮 / 文書プロパティ =====
 import { state, PDFDocument, getLibDoc, applyBytes, hasDoc } from './state.js';
-import { $, showDialog, showProgress, hideProgress, setStatus, downloadBytes, formatBytes, baseName, alertDialog, canvasToBytes } from './utils.js';
+import { $, showDialog, showProgress, hideProgress, setStatus, downloadBytes, formatBytes, baseName, alertDialog, canvasToBytes, escapeHTML } from './utils.js';
 import { renderPageToCanvas } from './convert.js';
 
 // ---------- 保護 ----------
@@ -35,9 +35,13 @@ export async function protectDialog() {
   ]);
   if (!opts) return;
   if (!opts.user && !opts.owner) { alertDialog('保護', 'パスワードが入力されていません。少なくとも1つのパスワードを設定してください。'); return; }
-  showProgress('暗号化中...');
   try {
     const doc = await getLibDoc();
+    if (typeof doc.encrypt !== 'function') {
+      await alertDialog('保護', 'Password protection is not supported by the current PDF library. The PDF was not changed.');
+      return;
+    }
+    showProgress('暗号化中...');
     doc.encrypt({
       userPassword: opts.user || undefined,
       ownerPassword: opts.owner || opts.user,
@@ -133,16 +137,16 @@ export async function propertiesDialog() {
   const fmt = d => { try { return d ? new Date(d).toLocaleString('ja-JP') : '—'; } catch { return '—'; } };
   await showDialog('文書のプロパティ', `
     <table class="prop-table">
-      <tr><td>ファイル名</td><td>${state.fileName}</td></tr>
-      <tr><td>タイトル</td><td>${info.Title || '—'}</td></tr>
-      <tr><td>作成者</td><td>${info.Author || '—'}</td></tr>
-      <tr><td>アプリケーション</td><td>${info.Creator || info.Producer || '—'}</td></tr>
-      <tr><td>作成日</td><td>${fmt(info.CreationDate ? pdfDateToJs(info.CreationDate) : null)}</td></tr>
-      <tr><td>更新日</td><td>${fmt(info.ModDate ? pdfDateToJs(info.ModDate) : null)}</td></tr>
+      <tr><td>ファイル名</td><td>${escapeHTML(state.fileName)}</td></tr>
+      <tr><td>タイトル</td><td>${escapeHTML(info.Title || '—')}</td></tr>
+      <tr><td>作成者</td><td>${escapeHTML(info.Author || '—')}</td></tr>
+      <tr><td>アプリケーション</td><td>${escapeHTML(info.Creator || info.Producer || '—')}</td></tr>
+      <tr><td>作成日</td><td>${escapeHTML(fmt(info.CreationDate ? pdfDateToJs(info.CreationDate) : null))}</td></tr>
+      <tr><td>更新日</td><td>${escapeHTML(fmt(info.ModDate ? pdfDateToJs(info.ModDate) : null))}</td></tr>
       <tr><td>ページ数</td><td>${state.pdf.numPages}</td></tr>
       <tr><td>ページサイズ</td><td>${(vp.width / 72 * 25.4).toFixed(0)} × ${(vp.height / 72 * 25.4).toFixed(0)} mm (${vp.width.toFixed(0)} × ${vp.height.toFixed(0)} pt)</td></tr>
       <tr><td>ファイルサイズ</td><td>${formatBytes(state.bytes.length)}</td></tr>
-      <tr><td>PDFバージョン</td><td>${info.PDFFormatVersion || '—'}</td></tr>
+      <tr><td>PDFバージョン</td><td>${escapeHTML(info.PDFFormatVersion || '—')}</td></tr>
       <tr><td>暗号化</td><td>${info.IsEncrypted ? 'あり' : 'なし'}</td></tr>
     </table>
   `, [{ label: '閉じる', accent: true }]);

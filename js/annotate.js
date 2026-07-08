@@ -1,6 +1,6 @@
 // ===== 注釈: ハイライト・ノート・フリーハンド描画・図形・テキスト注釈 =====
 // 注釈はまずオーバーレイ(pendingAnnots)に保持し、「注釈を適用」でPDFへ書き込む
-import { state, getLibDoc, applyBytes, rgb, PDFName, PDFString, BlendMode, LineCapStyle } from './state.js';
+import { state, getLibDoc, applyBytes, rgb, PDFName, PDFString, PDFHexString, BlendMode, LineCapStyle } from './state.js';
 import { $, $$, setStatus, showDialog, showProgress, hideProgress, hexToRgb01, getJapaneseFont, alertDialog } from './utils.js';
 import { addOverlayHook, getPageView } from './viewer.js';
 
@@ -10,6 +10,14 @@ export function isAnnotTool(tool) { return ANNOT_TOOLS.includes(tool); }
 
 export function init() {
   addOverlayHook(mountLayer);
+}
+
+function pdfDateString(date) {
+  const pad = n => String(n).padStart(2, '0');
+  const offset = -date.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  const abs = Math.abs(offset);
+  return `D:${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}${sign}${pad(Math.floor(abs / 60))}'${pad(abs % 60)}'`;
 }
 
 // 各ページに注釈レイヤーを取り付ける
@@ -259,11 +267,11 @@ export async function applyAnnotations() {
         const annot = doc.context.obj({
           Type: 'Annot', Subtype: 'Text',
           Rect: [a.at[0], a.at[1], a.at[0] + 20, a.at[1] + 20],
-          Contents: PDFString.of(a.text),
-          T: PDFString.of('PDF Editor Pro'),
+          Contents: PDFHexString.fromText(a.text),
+          T: PDFHexString.fromText('PDF Editor Pro'),
           Name: 'Comment',
           C: [r, g, b], CA: 1, F: 4,
-          M: PDFString.fromDate(new Date()),
+          M: PDFString.of(pdfDateString(new Date())),
         });
         const ref = doc.context.register(annot);
         const annots = page.node.lookup(PDFName.of('Annots'));
