@@ -11,6 +11,8 @@ let textCache = [];        // ページごとの getTextContent キャッシュ
 let searchState = { query: '', matches: [], index: -1 };
 let renderGeneration = 0;
 let zoomGeneration = 0;
+let searchGeneration = 0;
+let resizeTimer = null;
 export let overlayHooks = [];  // 各ページ描画後に呼ばれる (pageIndex, wrap, viewport)
 
 export function addOverlayHook(fn) { overlayHooks.push(fn); }
@@ -18,6 +20,11 @@ export function addOverlayHook(fn) { overlayHooks.push(fn); }
 export function init() {
   onDocChange(refresh);
   container().addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', () => {
+    if (state.zoomMode !== 'fit' && state.zoomMode !== 'width') return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => setZoom(state.zoomMode), 150);
+  });
 }
 
 // ---------- レイアウト ----------
@@ -63,11 +70,12 @@ export async function refresh() {
     wrap.style.height = `${viewport.height}px`;
     if (!isCurrentGeneration(generation, pdf)) return;
     v.appendChild(wrap);
-    pageViews.push({ wrap, viewport, page, rendered: false });
+    pageViews.push({ wrap, viewport, page, pdf, rendered: false });
     observer.observe(wrap);
   }
   renderThumbs(generation, pdf);
   updatePageUI();
+  syncZoomSelect();
   if (searchState.query) runSearch(searchState.query, true);
 }
 
@@ -91,7 +99,7 @@ async function renderPage(num, generation = renderGeneration) {
   const pv = pageViews[num - 1];
   if (!pv || pv.rendered || !isCurrentGeneration(generation)) return;
   pv.rendered = true;
-  const { page, viewport, wrap } = pv;
+  const { page, viewport, wrap, pdf } = pv;
   const canvas = document.createElement('canvas');
   canvas.className = 'page-canvas';
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -100,14 +108,19 @@ async function renderPage(num, generation = renderGeneration) {
   canvas.style.width = `${viewport.width}px`;
   canvas.style.height = `${viewport.height}px`;
   wrap.appendChild(canvas);
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null }).promise;
+  try {
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null }).promise;
+  } catch (e) {
+    if (isCurrentGeneration(generation)) setStatus(`ページ${num}の描画に失敗しました: ${e.message}`);
+    return;
+  }
   if (!isCurrentGeneration(generation)) return;
 
   // テキストレイヤー(選択・検索用)
   const tl = document.createElement('div');
   tl.className = 'text-layer';
   wrap.appendChild(tl);
-  const tc = await getTextContent(num);
+  const tc = await getTextContent(num, { pdf });
   if (!isCurrentGeneration(generation)) return;
   for (const item of tc.items) {
     if (!item.str || !item.str.trim()) continue;
@@ -138,12 +151,17 @@ async function renderPage(num, generation = renderGeneration) {
   if (searchState.query) paintMatchesOnPage(num - 1);
 }
 
-export async function getTextContent(pageNum) {
-  if (!textCache[pageNum - 1]) {
-    const page = await state.pdf.getPage(pageNum);
-    textCache[pageNum - 1] = await page.getTextContent();
+export async function getTextContent(pageNum, { pdf = state.pdf } = {}) {
+  if (!pdf) throw new Error('PDFが開かれていません。');
+  if (pdf === state.pdf) {
+    if (!textCache[pageNum - 1]) {
+      const page = await pdf.getPage(pageNum);
+      textCache[pageNum - 1] = await page.getTextContent();
+    }
+    return textCache[pageNum - 1];
   }
-  return textCache[pageNum - 1];
+  const page = await pdf.getPage(pageNum);
+  return page.getTextContent();
 }
 
 export function getPageView(pageIndex) { return pageViews[pageIndex]; }
@@ -169,7 +187,7 @@ async function renderThumbs(generation = renderGeneration, pdf = state.pdf) {
     div.addEventListener('click', () => gotoPage(i));
     if (!isCurrentGeneration(generation, pdf)) return;
     el.appendChild(div);
-    page.render({ canvasContext: c.getContext('2d'), viewport: vp });
+    page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise.catch(() => {});
   }
 }
 
@@ -240,22 +258,29 @@ export async function rotateView(deg) {
 
 // ---------- 検索 ----------
 export async function runSearch(query, keepIndex = false) {
+  const generation = ++searchGeneration;
+  const pdf = state.pdf;
   searchState.query = query;
   searchState.matches = [];
   if (!keepIndex) searchState.index = -1;
   $$('.hl-match').forEach(e => e.remove());
-  if (!query || !state.pdf) { $('#find-status').textContent = ''; return; }
+  if (!query || !pdf) { $('#find-status').textContent = ''; return; }
   const q = query.toLowerCase();
-  for (let p = 1; p <= state.pdf.numPages; p++) {
-    const tc = await getTextContent(p);
+  const matches = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    if (generation !== searchGeneration || pdf !== state.pdf) return;
+    const tc = await getTextContent(p, { pdf });
+    if (generation !== searchGeneration || pdf !== state.pdf) return;
     tc.items.forEach((item, idx) => {
       let pos = 0, s = item.str.toLowerCase();
       while ((pos = s.indexOf(q, pos)) !== -1) {
-        searchState.matches.push({ page: p - 1, itemIdx: idx, start: pos });
+        matches.push({ page: p - 1, itemIdx: idx, start: pos });
         pos += q.length;
       }
     });
   }
+  if (generation !== searchGeneration || pdf !== state.pdf) return;
+  searchState.matches = matches;
   for (let i = 0; i < pageViews.length; i++) if (pageViews[i].rendered) paintMatchesOnPage(i);
   $('#find-status').textContent = searchState.matches.length ? `${searchState.matches.length}件` : '見つかりません';
   if (searchState.matches.length && !keepIndex) findNext(1);
@@ -300,6 +325,7 @@ export function findNext(dir) {
 }
 
 export function clearSearch() {
+  searchGeneration++;
   searchState = { query: '', matches: [], index: -1 };
   $$('.hl-match').forEach(e => e.remove());
 }

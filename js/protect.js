@@ -1,6 +1,6 @@
 // ===== 保護(パスワード・権限)/ 圧縮 / 文書プロパティ =====
-import { state, PDFDocument, getLibDoc, applyBytes, hasDoc } from './state.js';
-import { $, showDialog, showProgress, hideProgress, setStatus, downloadBytes, formatBytes, baseName, alertDialog, canvasToBytes, escapeHTML } from './utils.js';
+import { state, PDFDocument, getLibDoc, applyBytes, hasDoc, documentToken, assertCurrentDocument } from './state.js';
+import { showDialog, showProgress, hideProgress, setStatus, downloadBytes, formatBytes, baseName, alertDialog, canvasToBytes, escapeHTML, LIMITS } from './utils.js';
 import { renderPageToCanvas } from './convert.js';
 
 // ---------- 保護 ----------
@@ -36,7 +36,8 @@ export async function protectDialog() {
   if (!opts) return;
   if (!opts.user && !opts.owner) { alertDialog('保護', 'パスワードが入力されていません。少なくとも1つのパスワードを設定してください。'); return; }
   try {
-    const doc = await getLibDoc();
+    const token = documentToken();
+    const doc = await getLibDoc({ token, action: '保護' });
     if (typeof doc.encrypt !== 'function') {
       await alertDialog('保護', 'Password protection is not supported by the current PDF library. The PDF was not changed.');
       return;
@@ -55,6 +56,7 @@ export async function protectDialog() {
         contentAccessibility: true,
       },
     });
+    assertCurrentDocument(token);
     const bytes = await doc.save({ useObjectStreams: false });
     downloadBytes(bytes, `${baseName(state.fileName)}_保護済み.pdf`);
     setStatus('保護されたPDFをダウンロードしました');
@@ -87,22 +89,30 @@ export async function compressDialog() {
   if (!opts) return;
   showProgress('圧縮中...', 0);
   try {
+    const token = documentToken();
+    const pdf = state.pdf;
+    const pageCount = pdf.numPages;
+    if (pageCount > LIMITS.maxBatchPages) {
+      throw new Error(`圧縮できるのは${LIMITS.maxBatchPages}ページまでです (${pageCount}ページ)。範囲を分けて実行してください。`);
+    }
     let bytes;
     if (opts === 'lossless') {
-      const doc = await getLibDoc();
+      const doc = await getLibDoc({ token, action: '圧縮' });
+      assertCurrentDocument(token);
       bytes = await doc.save({ useObjectStreams: true });
     } else {
       const cfg = { high: [150 / 72, 0.8], mid: [110 / 72, 0.7], low: [1, 0.55] }[opts];
       const out = await PDFDocument.create();
-      const srcDoc = await getLibDoc();
-      for (let p = 1; p <= state.pdf.numPages; p++) {
-        showProgress(`圧縮中... ページ ${p}/${state.pdf.numPages}`, p / state.pdf.numPages);
-        const c = await renderPageToCanvas(p, cfg[0]);
+      for (let p = 1; p <= pageCount; p++) {
+        showProgress(`圧縮中... ページ ${p}/${pageCount}`, p / pageCount);
+        const c = await renderPageToCanvas(p, cfg[0], { token, pdf });
         const jpg = await out.embedJpg(await canvasToBytes(c, 'image/jpeg', cfg[1]));
-        const { width, height } = srcDoc.getPage(p - 1).getSize();
+        const width = c.width / cfg[0];
+        const height = c.height / cfg[0];
         const page = out.addPage([width, height]);
         page.drawImage(jpg, { x: 0, y: 0, width, height });
       }
+      assertCurrentDocument(token);
       bytes = await out.save({ useObjectStreams: true });
     }
     const saved = orig - bytes.length;
@@ -117,7 +127,7 @@ export async function compressDialog() {
       { label: 'この文書に適用', accent: true, value: 'apply' },
     ]);
     if (act === 'apply') {
-      await applyBytes(bytes, '圧縮');
+      await applyBytes(bytes, '圧縮', { token });
       setStatus(`圧縮しました: ${formatBytes(orig)} → ${formatBytes(bytes.length)}`);
     } else if (act === 'dl') {
       downloadBytes(bytes, `${baseName(state.fileName)}_圧縮済み.pdf`);
@@ -130,9 +140,12 @@ export async function compressDialog() {
 // ---------- 文書プロパティ ----------
 export async function propertiesDialog() {
   if (!hasDoc()) return;
-  const meta = await state.pdf.getMetadata().catch(() => ({ info: {} }));
+  const token = documentToken();
+  const pdf = state.pdf;
+  const meta = await pdf.getMetadata().catch(() => ({ info: {} }));
   const info = meta.info || {};
-  const page = await state.pdf.getPage(1);
+  const page = await pdf.getPage(1);
+  assertCurrentDocument(token);
   const vp = page.getViewport({ scale: 1 });
   const fmt = d => { try { return d ? new Date(d).toLocaleString('ja-JP') : '—'; } catch { return '—'; } };
   await showDialog('文書のプロパティ', `
@@ -143,7 +156,7 @@ export async function propertiesDialog() {
       <tr><td>アプリケーション</td><td>${escapeHTML(info.Creator || info.Producer || '—')}</td></tr>
       <tr><td>作成日</td><td>${escapeHTML(fmt(info.CreationDate ? pdfDateToJs(info.CreationDate) : null))}</td></tr>
       <tr><td>更新日</td><td>${escapeHTML(fmt(info.ModDate ? pdfDateToJs(info.ModDate) : null))}</td></tr>
-      <tr><td>ページ数</td><td>${state.pdf.numPages}</td></tr>
+      <tr><td>ページ数</td><td>${pdf.numPages}</td></tr>
       <tr><td>ページサイズ</td><td>${(vp.width / 72 * 25.4).toFixed(0)} × ${(vp.height / 72 * 25.4).toFixed(0)} mm (${vp.width.toFixed(0)} × ${vp.height.toFixed(0)} pt)</td></tr>
       <tr><td>ファイルサイズ</td><td>${formatBytes(state.bytes.length)}</td></tr>
       <tr><td>PDFバージョン</td><td>${escapeHTML(info.PDFFormatVersion || '—')}</td></tr>

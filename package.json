@@ -2,9 +2,11 @@
   "name": "webapp_pdf-editor",
   "version": "1.0.0",
   "description": "Acrobat Pro互換のオフラインWeb PDFエディター",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node scripts/check-syntax.mjs",
+    "lint": "node scripts/check-syntax.mjs",
+    "build": "node scripts/check-syntax.mjs",
     "start": "node server.js"
   },
   "repository": {
@@ -28,7 +30,6 @@
     "pdfjs-dist": "^4.10.38",
     "pixelmatch": "^7.2.0",
     "pptxgenjs": "^4.0.1",
-    "tesseract.js": "^7.0.0",
-    "xlsx": "^0.18.5"
+    "tesseract.js": "^7.0.0"
   }
 }

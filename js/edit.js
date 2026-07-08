@@ -1,7 +1,7 @@
 // ===== PDF編集: 既存テキストの修正・画像の差し替え/削除・テキスト/画像の追加 =====
 // 既存要素の編集は「白塗り+再描画」方式(多くのPDF編集ソフトと同じアプローチ)
-import { state, pdfjsLib, getLibDoc, applyBytes, rgb } from './state.js';
-import { $, $$, setStatus, showProgress, hideProgress, pickFile, getJapaneseFont, alertDialog, hexToRgb01 } from './utils.js';
+import { state, pdfjsLib, getLibDoc, applyBytes, documentToken, assertCurrentDocument, rgb } from './state.js';
+import { $, $$, setStatus, showProgress, hideProgress, pickFile, getJapaneseFont, alertDialog, canvasToBytes, assertImageSize, assertCanvasSize, validateFiles } from './utils.js';
 import { addOverlayHook, getPageView, getTextContent } from './viewer.js';
 
 let subTool = null;        // null | 'addText' | 'addImage'
@@ -15,6 +15,12 @@ export function isEditMode() { return state.tool === 'edit'; }
 
 export async function setEditMode(on) {
   if (on && !state.pdf) {
+    state.tool = 'select';
+    syncToolbarTool();
+    return false;
+  }
+  if (on && state.viewRotation !== 0) {
+    alertDialog('編集', '表示を回転した状態では編集できません。表示回転を0度に戻してから実行してください。');
     state.tool = 'select';
     syncToolbarTool();
     return false;
@@ -44,6 +50,7 @@ export async function startAddText() {
 export async function startAddImage() {
   const file = await pickFile('.png,.jpg,.jpeg,.bmp,.gif,.webp');
   if (!file) return;
+  validateFiles(file);
   if (!isEditMode() && !await setEditMode(true)) return;
   pendingImageFile = file;
   subTool = 'addImage';
@@ -55,6 +62,33 @@ function syncToolbarTool() {
   $$('#toolbar .tool-toggle').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
 }
 
+async function replacePageWithFlattenedCanvas(pageIndex, drawOverlay, label, token = documentToken()) {
+  assertCurrentDocument(token);
+  const pdf = token?.pdf ?? state.pdf;
+  const pdfPage = await pdf.getPage(pageIndex + 1);
+  const scale = 2;
+  const viewport = pdfPage.getViewport({ scale });
+  assertCanvasSize(viewport.width, viewport.height, '編集ページ');
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width);
+  canvas.height = Math.round(viewport.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+  await drawOverlay(ctx, viewport, scale);
+  assertCurrentDocument(token);
+
+  const doc = await getLibDoc({ token, action: label });
+  const image = await doc.embedJpg(await canvasToBytes(canvas, 'image/jpeg', 0.92));
+  const pageW = viewport.width / scale;
+  const pageH = viewport.height / scale;
+  doc.removePage(pageIndex);
+  const page = doc.insertPage(pageIndex, [pageW, pageH]);
+  page.drawImage(image, { x: 0, y: 0, width: pageW, height: pageH });
+  await applyBytes(await doc.save(), label, { token });
+}
+
 async function mountEditLayer(pageIndex, wrap, viewport) {
   if (!isEditMode()) return;
   wrap.querySelector('.edit-layer')?.remove();
@@ -64,7 +98,7 @@ async function mountEditLayer(pageIndex, wrap, viewport) {
   wrap.appendChild(layer);
 
   // --- 既存テキスト要素 ---
-  const tc = await getTextContent(pageIndex + 1);
+  const tc = await getTextContent(pageIndex + 1, { pdf: getPageView(pageIndex)?.pdf ?? state.pdf });
   tc.items.forEach(item => {
     if (!item.str || !item.str.trim()) return;
     const h = Math.hypot(item.transform[2], item.transform[3]);
@@ -177,23 +211,24 @@ function beginTextEdit(div, pageIndex, item, fontSizePt) {
 // 白塗り+新テキスト描画で既存テキストを置き換える
 async function replaceTextItem(pageIndex, item, fontSizePt, newText) {
   showProgress('テキストを更新中...');
+  const token = documentToken();
   try {
-    const doc = await getLibDoc();
-    doc.registerFontkit(window.fontkit);
-    const font = await doc.embedFont(await getJapaneseFont(), { subset: true });
-    const page = doc.getPage(pageIndex);
-    const x = item.transform[4], y = item.transform[5];
-    const newW = newText ? font.widthOfTextAtSize(newText, fontSizePt) : 0;
-    const w = Math.max(item.width, newW) + 2;
-    page.drawRectangle({
-      x: x - 1, y: y - fontSizePt * 0.28,
-      width: w, height: fontSizePt * 1.45,
-      color: rgb(1, 1, 1),
-    });
-    if (newText) {
-      page.drawText(newText, { x, y, size: fontSizePt, font, color: rgb(0, 0, 0) });
-    }
-    await applyBytes(await doc.save(), 'テキストを編集');
+    await replacePageWithFlattenedCanvas(pageIndex, async (ctx, viewport, scale) => {
+      const [x, baselineY] = viewport.convertToViewportPoint(item.transform[4], item.transform[5]);
+      const fontPx = fontSizePt * scale;
+      ctx.save();
+      ctx.font = `${fontPx}px sans-serif`;
+      ctx.textBaseline = 'alphabetic';
+      const textWidth = newText ? ctx.measureText(newText).width : 0;
+      const width = Math.max(item.width * scale, textWidth) + 6;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(x - 2, baselineY - fontPx * 1.1, width, fontPx * 1.45);
+      if (newText) {
+        ctx.fillStyle = '#000';
+        ctx.fillText(newText, x, baselineY);
+      }
+      ctx.restore();
+    }, 'テキストを編集', token);
     setStatus('テキストを更新しました');
   } catch (e) {
     alertDialog('編集エラー', e.message);
@@ -202,7 +237,12 @@ async function replaceTextItem(pageIndex, item, fontSizePt, newText) {
 
 // ---------- 新規テキスト ----------
 function beginNewText(layer, pageIndex, x, y) {
+  if (state.viewRotation !== 0) {
+    alertDialog('編集', '表示を回転した状態ではテキストを追加できません。表示回転を0度に戻してから実行してください。');
+    return;
+  }
   const vp = layer._viewport;
+  const token = documentToken();
   const div = document.createElement('div');
   div.className = 'edit-text-item editing';
   div.contentEditable = 'true';
@@ -218,12 +258,15 @@ function beginNewText(layer, pageIndex, x, y) {
     const [px, py] = vp.convertToPdfPoint(x, y + 14 * vp.scale);
     showProgress('テキストを追加中...');
     try {
-      const doc = await getLibDoc();
+      const doc = await getLibDoc({ token, action: 'テキスト追加' });
       doc.registerFontkit(window.fontkit);
       const font = await doc.embedFont(await getJapaneseFont(), { subset: true });
       doc.getPage(pageIndex).drawText(text, { x: px, y: py, size: 14, font, color: rgb(0, 0, 0) });
-      await applyBytes(await doc.save(), 'テキストを追加');
+      assertCurrentDocument(token);
+      await applyBytes(await doc.save(), 'テキストを追加', { token });
       setStatus('テキストを追加しました');
+    } catch (e) {
+      alertDialog('追加エラー', e.message);
     } finally { hideProgress(); }
   };
   div.addEventListener('blur', commit, { once: true });
@@ -251,7 +294,7 @@ function selectImage(div, pageIndex, rect) {
     if (op === 'replace') {
       const file = await pickFile('.png,.jpg,.jpeg,.bmp,.gif,.webp');
       closeFloatingBar();
-      if (file) await replaceImage(pageIndex, rect, file);
+      if (file) { validateFiles(file); await replaceImage(pageIndex, rect, file); }
     } else if (op === 'delete') {
       closeFloatingBar();
       await whiteOutRect(pageIndex, rect, '画像を削除');
@@ -261,30 +304,44 @@ function selectImage(div, pageIndex, rect) {
 
 async function embedImageFile(doc, file) {
   const buf = await file.arrayBuffer();
-  if (/\.jpe?g$/i.test(file.name)) return doc.embedJpg(buf);
-  if (/\.png$/i.test(file.name)) return doc.embedPng(buf);
+  if (/\.jpe?g$/i.test(file.name)) {
+    const img = await doc.embedJpg(buf);
+    assertImageSize(img.width, img.height, file.name);
+    return img;
+  }
+  if (/\.png$/i.test(file.name)) {
+    const img = await doc.embedPng(buf);
+    assertImageSize(img.width, img.height, file.name);
+    return img;
+  }
   const bmp = await createImageBitmap(new Blob([buf]));
+  assertImageSize(bmp.width, bmp.height, file.name);
+  assertCanvasSize(bmp.width, bmp.height, file.name);
   const c = document.createElement('canvas');
   c.width = bmp.width; c.height = bmp.height;
   c.getContext('2d').drawImage(bmp, 0, 0);
   const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  if (!blob) throw new Error('画像変換に失敗しました。');
   return doc.embedPng(await blob.arrayBuffer());
 }
 
 async function replaceImage(pageIndex, rect, file) {
   showProgress('画像を差し替え中...');
+  const token = documentToken();
   try {
-    const doc = await getLibDoc();
-    const img = await embedImageFile(doc, file);
-    const page = doc.getPage(pageIndex);
-    const [x1, y1, x2, y2] = rect;
-    const rw = x2 - x1, rh = y2 - y1;
-    page.drawRectangle({ x: x1, y: y1, width: rw, height: rh, color: rgb(1, 1, 1) });
-    // アスペクト比を保って領域内に収める
-    const s = Math.min(rw / img.width, rh / img.height);
-    const w = img.width * s, h = img.height * s;
-    page.drawImage(img, { x: x1 + (rw - w) / 2, y: y1 + (rh - h) / 2, width: w, height: h });
-    await applyBytes(await doc.save(), '画像を差し替え');
+    const bitmap = await createImageBitmap(file);
+    assertImageSize(bitmap.width, bitmap.height, file.name);
+    await replacePageWithFlattenedCanvas(pageIndex, async (ctx, viewport) => {
+      const p1 = viewport.convertToViewportPoint(rect[0], rect[3]);
+      const p2 = viewport.convertToViewportPoint(rect[2], rect[1]);
+      const x = Math.min(p1[0], p2[0]), y = Math.min(p1[1], p2[1]);
+      const rw = Math.abs(p2[0] - p1[0]), rh = Math.abs(p2[1] - p1[1]);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(x, y, rw, rh);
+      const s = Math.min(rw / bitmap.width, rh / bitmap.height);
+      const w = bitmap.width * s, h = bitmap.height * s;
+      ctx.drawImage(bitmap, x + (rw - w) / 2, y + (rh - h) / 2, w, h);
+    }, '画像を差し替え', token);
     setStatus('画像を差し替えました');
   } catch (e) {
     alertDialog('差し替えエラー', e.message);
@@ -293,25 +350,36 @@ async function replaceImage(pageIndex, rect, file) {
 
 async function whiteOutRect(pageIndex, rect, label) {
   showProgress('処理中...');
+  const token = documentToken();
   try {
-    const doc = await getLibDoc();
-    doc.getPage(pageIndex).drawRectangle({ x: rect[0], y: rect[1], width: rect[2] - rect[0], height: rect[3] - rect[1], color: rgb(1, 1, 1) });
-    await applyBytes(await doc.save(), label);
-    setStatus(label + 'しました(白塗り)');
+    await replacePageWithFlattenedCanvas(pageIndex, async (ctx, viewport) => {
+      const p1 = viewport.convertToViewportPoint(rect[0], rect[3]);
+      const p2 = viewport.convertToViewportPoint(rect[2], rect[1]);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(Math.min(p1[0], p2[0]), Math.min(p1[1], p2[1]), Math.abs(p2[0] - p1[0]), Math.abs(p2[1] - p1[1]));
+    }, label, token);
+    setStatus(label + 'しました');
+  } catch (e) {
+    alertDialog('編集エラー', e.message);
   } finally { hideProgress(); }
 }
 
 async function placeImage(pageIndex, at, file) {
   showProgress('画像を配置中...');
+  const token = documentToken();
   try {
-    const doc = await getLibDoc();
+    if (state.viewRotation !== 0) throw new Error('表示を回転した状態では画像を追加できません。表示回転を0度に戻してから実行してください。');
+    const doc = await getLibDoc({ token, action: '画像追加' });
     const img = await embedImageFile(doc, file);
     const page = doc.getPage(pageIndex);
     const maxW = page.getWidth() * 0.5;
     const s = Math.min(1, maxW / img.width);
     const w = img.width * s, h = img.height * s;
     page.drawImage(img, { x: at[0] - w / 2, y: at[1] - h / 2, width: w, height: h });
-    await applyBytes(await doc.save(), '画像を追加');
+    assertCurrentDocument(token);
+    await applyBytes(await doc.save(), '画像を追加', { token });
     setStatus('画像を追加しました');
+  } catch (e) {
+    alertDialog('追加エラー', e.message);
   } finally { hideProgress(); }
 }

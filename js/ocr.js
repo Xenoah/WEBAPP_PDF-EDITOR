@@ -1,6 +1,6 @@
 // ===== OCR: スキャンPDFを検索可能・編集可能なPDFへ変換 (Tesseract.js / 完全オフライン) =====
-import { state, getLibDoc, applyBytes, hasDoc } from './state.js';
-import { showDialog, showProgress, hideProgress, setStatus, parsePageRange, getJapaneseFont, alertDialog } from './utils.js';
+import { state, getLibDoc, applyBytes, hasDoc, documentToken, assertCurrentDocument } from './state.js';
+import { showDialog, showProgress, hideProgress, setStatus, parsePageRange, getJapaneseFont, alertDialog, LIMITS } from './utils.js';
 import { renderPageToCanvas } from './convert.js';
 
 export async function runOcrDialog() {
@@ -23,7 +23,13 @@ export async function runOcrDialog() {
     { label: 'OCRを実行', accent: true, onClick: b => ({ lang: b.querySelector('#ocr-lang').value, pages: b.querySelector('#ocr-pages').value }) },
   ]);
   if (!opts) return;
-  await runOcr(opts.lang, parsePageRange(opts.pages, state.pdf.numPages));
+  const pages = parsePageRange(opts.pages, state.pdf.numPages);
+  if (!pages.length) { alertDialog('OCR', '対象ページがありません。'); return; }
+  if (pages.length > LIMITS.maxBatchPages) {
+    alertDialog('OCR', `OCRできるのは${LIMITS.maxBatchPages}ページまでです。範囲を分けて実行してください。`);
+    return;
+  }
+  await runOcr(opts.lang, pages);
 }
 
 async function runOcr(lang, pageIndices) {
@@ -31,6 +37,8 @@ async function runOcr(lang, pageIndices) {
   let worker = null;
   let curPageLabel = '';
   try {
+    const token = documentToken();
+    const pdf = state.pdf;
     worker = await window.Tesseract.createWorker(lang, 1, {
       workerPath: 'vendor/tesseract.worker.min.js',
       corePath: 'vendor/tesseract-core',
@@ -42,7 +50,7 @@ async function runOcr(lang, pageIndices) {
         }
       },
     });
-    const doc = await getLibDoc();
+    const doc = await getLibDoc({ token, action: 'OCR' });
     doc.registerFontkit(window.fontkit);
     const font = await doc.embedFont(await getJapaneseFont(), { subset: true });
     const SCALE = 300 / 72; // 300dpi相当で認識
@@ -52,8 +60,9 @@ async function runOcr(lang, pageIndices) {
       const pi = pageIndices[n];
       curPageLabel = `OCR実行中... ページ ${pi + 1} (${n + 1}/${pageIndices.length})`;
       showProgress(curPageLabel, n / pageIndices.length);
-      const canvas = await renderPageToCanvas(pi + 1, SCALE);
+      const canvas = await renderPageToCanvas(pi + 1, SCALE, { token, pdf });
       const { data } = await worker.recognize(canvas, {}, { blocks: true, text: true });
+      assertCurrentDocument(token);
       const page = doc.getPage(pi);
       const pageH = page.getHeight();
       const words = collectWords(data);
@@ -69,7 +78,8 @@ async function runOcr(lang, pageIndices) {
         } catch { /* グリフ欠落は無視 */ }
       }
     }
-    await applyBytes(await doc.save(), 'OCR');
+    assertCurrentDocument(token);
+    await applyBytes(await doc.save(), 'OCR', { token });
     setStatus(`OCR完了: ${totalWords}語のテキストを${pageIndices.length}ページへ埋め込みました`);
     alertDialog('OCR完了', `${pageIndices.length}ページを処理し、${totalWords}語を検索可能テキストとして埋め込みました。<br>Ctrl+F で検索できることを確認してください。`);
   } catch (e) {

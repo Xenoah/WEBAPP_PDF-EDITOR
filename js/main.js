@@ -1,6 +1,6 @@
 // ===== PDF Editor Pro — エントリポイント / コマンド配線 =====
-import { state, loadBytes, undo, redo, hasDoc, closeDocument } from './state.js';
-import { $, $$, setStatus, pickFile, downloadBytes, showDialog, alertDialog, baseName, hideProgress, closeDialog, escapeHTML } from './utils.js';
+import { state, loadBytes, undo, redo, hasDoc, closeDocument, onDocChange } from './state.js';
+import { $, $$, setStatus, pickFile, downloadBytes, showDialog, alertDialog, baseName, hideProgress, closeDialog, escapeHTML, validateFiles } from './utils.js';
 import * as viewer from './viewer.js';
 import * as organize from './organize.js';
 import * as annotate from './annotate.js';
@@ -14,10 +14,61 @@ viewer.init();
 annotate.init();
 edit.init();
 
+let commandBusy = false;
+
+function isDialogOpen() {
+  const bd = $('#dialog-backdrop');
+  return bd && !bd.hidden;
+}
+
+function syncUiFromState() {
+  $$('#toolbar .tool-toggle').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
+  annotate.updateLayerMode();
+}
+
+async function flushActiveEdits() {
+  const active = document.activeElement;
+  if (active?.isContentEditable) {
+    active.blur();
+    await new Promise(r => setTimeout(r, 120));
+  }
+}
+
+async function confirmPendingAnnotationsBeforeReplace() {
+  if (!hasDoc() || !state.pendingAnnots.length) return true;
+  const action = await showDialog('未適用の注釈があります', `
+    <p style="line-height:1.7">現在の文書にはPDF本体へ書き込まれていない注釈があります。文書を切り替える前にどうしますか?</p>
+  `, [
+    { label: 'キャンセル', value: null },
+    { label: '破棄して続行', value: 'discard' },
+    { label: '適用して続行', accent: true, value: 'apply' },
+  ]);
+  if (!action) return false;
+  if (action === 'apply') return await annotate.applyAnnotations();
+  annotate.discardPendingAnnotations();
+  return true;
+}
+
+async function runCommand(cmd) {
+  const fn = commands[cmd];
+  if (!fn || commandBusy) return;
+  commandBusy = true;
+  try {
+    await fn();
+  } catch (e) {
+    await alertDialog('エラー', e?.message || String(e));
+  } finally {
+    commandBusy = false;
+    syncUiFromState();
+  }
+}
+
 // ---------- ファイルを開く ----------
 async function openFile(fileArg) {
-  const file = fileArg || await pickFile('.pdf,.docx,.xlsx,.xls,.csv,.pptx,.png,.jpg,.jpeg,.bmp,.gif,.webp,.txt,.md');
+  const file = fileArg || await pickFile('.pdf,.docx,.csv,.pptx,.png,.jpg,.jpeg,.bmp,.gif,.webp,.txt,.md');
   if (!file) return;
+  validateFiles(file);
+  if (!await confirmPendingAnnotationsBeforeReplace()) return;
   if (/\.pdf$/i.test(file.name)) {
     await openPdfBytes(new Uint8Array(await file.arrayBuffer()), file.name);
   } else {
@@ -48,6 +99,7 @@ async function openPdfBytes(bytes, name, password = null) {
 // ---------- 保存 ----------
 async function saveFile() {
   if (!hasDoc()) return false;
+  await flushActiveEdits();
   if (state.pendingAnnots.length) {
     const action = await showDialog('未適用の注釈があります', `
       <p style="line-height:1.7">画面上の注釈は、まだPDF本体に書き込まれていません。保存前に適用しますか?</p>
@@ -57,7 +109,7 @@ async function saveFile() {
       { label: '適用して保存', accent: true, value: 'apply' },
     ]);
     if (!action) return false;
-    if (action === 'apply') await annotate.applyAnnotations();
+    if (action === 'apply' && !await annotate.applyAnnotations()) return false;
   }
   downloadBytes(state.bytes, state.fileName);
   setStatus(`${state.fileName} saved.`);
@@ -143,13 +195,18 @@ function showPane(name) {
 const commands = {
   open: () => openFile(),
   create: async () => {
-    const files = await pickFile('.docx,.xlsx,.xls,.csv,.pptx,.png,.jpg,.jpeg,.bmp,.gif,.webp,.txt,.md,.pdf', true);
-    if (files?.length) await convert.createPdfFromFiles(files);
+    const files = await pickFile('.docx,.csv,.pptx,.png,.jpg,.jpeg,.bmp,.gif,.webp,.txt,.md,.pdf', true);
+    if (files?.length) {
+      validateFiles(files);
+      if (!await confirmPendingAnnotationsBeforeReplace()) return;
+      await convert.createPdfFromFiles(files);
+    }
   },
   save: saveFile,
   saveAs,
   close: async () => {
     if (!hasDoc()) return false;
+    if (!await confirmPendingAnnotationsBeforeReplace()) return false;
     closeDocument();
     setTool('select');
     setStatus('文書を閉じました');
@@ -239,7 +296,7 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('[data-cmd]');
   if (btn) {
     closeMenus();
-    commands[btn.dataset.cmd]?.();
+    runCommand(btn.dataset.cmd);
     return;
   }
   const toolBtn = e.target.closest('[data-tool]');
@@ -251,6 +308,7 @@ document.addEventListener('click', e => {
 });
 
 function setTool(tool) {
+  if (tool !== 'edit' && edit.isEditMode()) edit.setEditMode(false);
   state.tool = tool;
   $$('#toolbar .tool-toggle').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
   annotate.updateLayerMode();
@@ -258,7 +316,7 @@ function setTool(tool) {
   setStatus(`ツール: ${names[tool] || tool}`);
 }
 
-$('#apply-annots').addEventListener('click', () => annotate.applyAnnotations());
+$('#apply-annots').addEventListener('click', () => runCommand('applyAnnots'));
 $('#annot-color').addEventListener('input', e => { state.annotColor = e.target.value; });
 
 // メニュー開閉
@@ -308,21 +366,28 @@ function closeFindbar() { const fb = $('#findbar'); fb.hidden = true; fb.style.d
 // ---------- キーボードショートカット ----------
 document.addEventListener('keydown', e => {
   const inInput = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+  const inEditablePdfText = document.activeElement?.isContentEditable && document.activeElement.closest('.edit-layer,.annot-layer');
   const ctrl = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
-  if (ctrl && k === 'o') { e.preventDefault(); commands.open(); }
-  else if (ctrl && k === 's') { e.preventDefault(); e.shiftKey ? saveAs() : saveFile(); }
-  else if (ctrl && k === 'p') { e.preventDefault(); commands.print(); }
-  else if (ctrl && k === 'z') { e.preventDefault(); e.shiftKey ? commands.redo() : commands.undo(); }
-  else if (ctrl && k === 'y') { e.preventDefault(); commands.redo(); }
-  else if (ctrl && k === 'f') { e.preventDefault(); commands.find(); }
-  else if (ctrl && k === 'd') { e.preventDefault(); commands.props(); }
-  else if (ctrl && k === 'w') { e.preventDefault(); commands.close(); }
-  else if (ctrl && (k === '+' || k === '=' || k === ';')) { e.preventDefault(); commands.zoomIn(); }
-  else if (ctrl && k === '-') { e.preventDefault(); commands.zoomOut(); }
-  else if (ctrl && k === '0') { e.preventDefault(); commands.zoomFit(); }
-  else if (ctrl && k === '1') { e.preventDefault(); commands.zoom100(); }
-  else if (ctrl && k === '2') { e.preventDefault(); commands.zoomWidth(); }
+  if (inInput && !(inEditablePdfText && ctrl && k === 's')) return;
+  if (isDialogOpen() || commandBusy) {
+    if (ctrl) e.preventDefault();
+    if (e.key === 'Escape' && !commandBusy) closeDialog();
+    return;
+  }
+  if (ctrl && k === 'o') { e.preventDefault(); runCommand('open'); }
+  else if (ctrl && k === 's') { e.preventDefault(); e.shiftKey ? runCommand('saveAs') : runCommand('save'); }
+  else if (ctrl && k === 'p') { e.preventDefault(); runCommand('print'); }
+  else if (ctrl && k === 'z') { e.preventDefault(); e.shiftKey ? runCommand('redo') : runCommand('undo'); }
+  else if (ctrl && k === 'y') { e.preventDefault(); runCommand('redo'); }
+  else if (ctrl && k === 'f') { e.preventDefault(); runCommand('find'); }
+  else if (ctrl && k === 'd') { e.preventDefault(); runCommand('props'); }
+  else if (ctrl && k === 'w') { e.preventDefault(); runCommand('close'); }
+  else if (ctrl && (k === '+' || k === '=' || k === ';')) { e.preventDefault(); runCommand('zoomIn'); }
+  else if (ctrl && k === '-') { e.preventDefault(); runCommand('zoomOut'); }
+  else if (ctrl && k === '0') { e.preventDefault(); runCommand('zoomFit'); }
+  else if (ctrl && k === '1') { e.preventDefault(); runCommand('zoom100'); }
+  else if (ctrl && k === '2') { e.preventDefault(); runCommand('zoomWidth'); }
   else if (!inInput && !ctrl) {
     if (e.key === 'ArrowLeft' || e.key === 'PageUp') commands.prevPage();
     else if (e.key === 'ArrowRight' || e.key === 'PageDown') commands.nextPage();
@@ -342,26 +407,38 @@ document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.bod
 document.addEventListener('drop', async e => {
   e.preventDefault();
   document.body.classList.remove('dragging');
-  const files = [...e.dataTransfer.files];
-  if (!files.length) return;
-  if (files.length === 1) await openFile(files[0]);
-  else await convert.createPdfFromFiles(files);
+  try {
+    if (commandBusy) {
+      await alertDialog('処理中', '現在の処理が終わってからファイルを開いてください。');
+      return;
+    }
+    const files = [...e.dataTransfer.files];
+    if (!files.length) return;
+    validateFiles(files);
+    if (!await confirmPendingAnnotationsBeforeReplace()) return;
+    if (files.length === 1) await openFile(files[0]);
+    else await convert.createPdfFromFiles(files);
+  } catch (err) {
+    alertDialog('ファイルを開けませんでした', err?.message || String(err));
+  }
 });
 
 // 手のひらツール(ドラッグスクロール)
 let panning = null;
-$('#viewer-container').addEventListener('mousedown', e => {
+$('#viewer-container').addEventListener('pointerdown', e => {
   if (state.tool !== 'hand') return;
   panning = { x: e.clientX, y: e.clientY, sl: $('#viewer-container').scrollLeft, st: $('#viewer-container').scrollTop };
+  e.currentTarget.setPointerCapture?.(e.pointerId);
   e.preventDefault();
 });
-document.addEventListener('mousemove', e => {
+document.addEventListener('pointermove', e => {
   if (!panning) return;
   const c = $('#viewer-container');
   c.scrollLeft = panning.sl - (e.clientX - panning.x);
   c.scrollTop = panning.st - (e.clientY - panning.y);
 });
-document.addEventListener('mouseup', () => { panning = null; });
+document.addEventListener('pointerup', () => { panning = null; });
+document.addEventListener('pointercancel', () => { panning = null; });
 
 // Ctrl+ホイールでズーム
 $('#viewer-container').addEventListener('wheel', e => {
@@ -384,3 +461,4 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 setStatus('準備完了 — PDFを開くかファイルをドロップしてください');
+onDocChange(syncUiFromState);

@@ -1,6 +1,6 @@
 // ===== 注釈: ハイライト・ノート・フリーハンド描画・図形・テキスト注釈 =====
 // 注釈はまずオーバーレイ(pendingAnnots)に保持し、「注釈を適用」でPDFへ書き込む
-import { state, getLibDoc, applyBytes, rgb, PDFName, PDFString, PDFHexString, BlendMode, LineCapStyle } from './state.js';
+import { state, getLibDoc, applyBytes, documentToken, assertCurrentDocument, rgb, PDFName, PDFString, PDFHexString, BlendMode, LineCapStyle } from './state.js';
 import { $, $$, setStatus, showDialog, showProgress, hideProgress, hexToRgb01, getJapaneseFont, alertDialog } from './utils.js';
 import { addOverlayHook, getPageView } from './viewer.js';
 
@@ -53,9 +53,14 @@ function attachEvents(layer, pageIndex) {
     return [e.clientX - r.left, e.clientY - r.top];
   };
 
-  layer.addEventListener('mousedown', async e => {
+  layer.addEventListener('pointerdown', async e => {
     if (!isAnnotTool(state.tool) || e.button !== 0) return;
     e.preventDefault();
+    if (state.viewRotation !== 0) {
+      alertDialog('注釈', '表示を回転した状態では注釈を追加できません。表示回転を0度に戻してから実行してください。');
+      return;
+    }
+    layer.setPointerCapture?.(e.pointerId);
     const [x, y] = toLocal(e);
     if (state.tool === 'note') { await placeNote(layer, pageIndex, x, y); return; }
     if (state.tool === 'freetext') { placeFreeText(layer, pageIndex, x, y); return; }
@@ -67,7 +72,7 @@ function attachEvents(layer, pageIndex) {
     svg.appendChild(tempEl);
   });
 
-  layer.addEventListener('mousemove', e => {
+  layer.addEventListener('pointermove', e => {
     if (!start || !tempEl) return;
     const [x, y] = toLocal(e);
     if (state.tool === 'draw') {
@@ -104,8 +109,8 @@ function attachEvents(layer, pageIndex) {
     redrawLayer(pageIndex);
     updateLayerMode();
   };
-  layer.addEventListener('mouseup', finish);
-  layer.addEventListener('mouseleave', e => { if (start) finish(e); });
+  layer.addEventListener('pointerup', finish);
+  layer.addEventListener('pointercancel', e => { if (start) finish(e); });
 }
 
 function styleShape(el, tool, color) {
@@ -229,19 +234,31 @@ function removeAnnot(ai) {
   setStatus('注釈を削除しました(未適用の注釈はダブルクリックで削除できます)');
 }
 
+export function discardPendingAnnotations() {
+  const pages = new Set(state.pendingAnnots.map(a => a.page));
+  state.pendingAnnots = [];
+  for (const page of pages) redrawLayer(page);
+  updateLayerMode();
+}
+
 // ---------- PDFへ適用 ----------
 export async function applyAnnotations() {
-  if (!state.pendingAnnots.length) return;
+  if (!state.pendingAnnots.length) return true;
+  const token = documentToken();
+  const pending = state.pendingAnnots.map(a => structuredClone(a));
   showProgress('注釈をPDFへ適用中...');
   try {
-    const doc = await getLibDoc();
+    const doc = await getLibDoc({ token, action: '注釈の適用' });
+    if (pending.some(a => a.page < 0 || a.page >= doc.getPageCount())) {
+      throw new Error('注釈の対象ページが現在の文書と一致しません。ページ操作後の未適用注釈は適用できません。');
+    }
     let font = null;
-    const needFont = state.pendingAnnots.some(a => a.kind === 'freetext');
+    const needFont = pending.some(a => a.kind === 'freetext');
     if (needFont) {
       doc.registerFontkit(window.fontkit);
       font = await doc.embedFont(await getJapaneseFont(), { subset: true });
     }
-    for (const a of state.pendingAnnots) {
+    for (const a of pending) {
       const page = doc.getPage(a.page);
       const [r, g, b] = hexToRgb01(a.color);
       const color = rgb(r, g, b);
@@ -279,10 +296,12 @@ export async function applyAnnotations() {
         else page.node.set(PDFName.of('Annots'), doc.context.obj([ref]));
       }
     }
-    const count = state.pendingAnnots.length;
-    state.pendingAnnots = [];
-    await applyBytes(await doc.save(), '注釈を適用');
+    const count = pending.length;
+    assertCurrentDocument(token);
+    await applyBytes(await doc.save(), '注釈を適用', { token, allowPendingAnnots: true, pendingAnnots: [] });
     setStatus(`${count}個の注釈をPDFへ適用しました`);
+    return true;
   } catch (e) { alertDialog('注釈の適用エラー', e.message);
+    return false;
   } finally { hideProgress(); }
 }

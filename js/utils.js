@@ -2,6 +2,17 @@
 export const $ = (sel, el = document) => el.querySelector(sel);
 export const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
+export const LIMITS = Object.freeze({
+  maxFileBytes: 100 * 1024 * 1024,
+  maxTotalInputBytes: 250 * 1024 * 1024,
+  maxImagePixels: 40_000_000,
+  maxCanvasPixels: 48_000_000,
+  maxPdfPages: 1000,
+  maxBatchPages: 300,
+  maxZipEntries: 1200,
+  maxXmlBytes: 3 * 1024 * 1024,
+});
+
 export function setStatus(msg) { $('#status-msg').textContent = msg; }
 
 export function escapeHTML(value) {
@@ -77,6 +88,8 @@ export function closeDialog() {
   const bd = $('#dialog-backdrop');
   bd.hidden = true;
   bd.style.display = 'none';
+  $('#dialog-body').innerHTML = '';
+  $('#dialog-actions').innerHTML = '';
 }
 
 export function alertDialog(title, msg, { html = false } = {}) {
@@ -93,12 +106,51 @@ export function confirmDialog(title, msg, { html = false } = {}) {
 export function pickFile(accept, multiple = false) {
   return new Promise(resolve => {
     const inp = $('#file-input');
+    let done = false;
+    const finish = value => {
+      if (done) return;
+      done = true;
+      window.removeEventListener('focus', onFocus);
+      inp.onchange = null;
+      resolve(value);
+    };
+    const onFocus = () => {
+      setTimeout(() => {
+        if (!done && (!inp.files || inp.files.length === 0)) finish(multiple ? [] : null);
+      }, 250);
+    };
     inp.value = '';
     inp.accept = accept;
     inp.multiple = multiple;
-    inp.onchange = () => resolve(multiple ? [...inp.files] : inp.files[0] || null);
+    inp.onchange = () => finish(multiple ? [...inp.files] : inp.files[0] || null);
+    window.addEventListener('focus', onFocus);
     inp.click();
   });
+}
+
+export function validateFiles(files, { total = LIMITS.maxTotalInputBytes, perFile = LIMITS.maxFileBytes } = {}) {
+  const list = Array.isArray(files) ? files : [files].filter(Boolean);
+  const totalBytes = list.reduce((sum, f) => sum + (f?.size || 0), 0);
+  if (totalBytes > total) throw new Error(`入力ファイルの合計サイズが大きすぎます (${formatBytes(totalBytes)} / 上限 ${formatBytes(total)})`);
+  for (const file of list) {
+    if (file.size > perFile) throw new Error(`${file.name} が大きすぎます (${formatBytes(file.size)} / 上限 ${formatBytes(perFile)})`);
+  }
+}
+
+export function assertCanvasSize(width, height, label = 'canvas') {
+  const pixels = Math.ceil(width) * Math.ceil(height);
+  if (!Number.isFinite(pixels) || pixels <= 0) throw new Error(`${label} のサイズが不正です`);
+  if (pixels > LIMITS.maxCanvasPixels) {
+    throw new Error(`${label} が大きすぎます (${Math.round(pixels / 1_000_000)}MP / 上限 ${Math.round(LIMITS.maxCanvasPixels / 1_000_000)}MP)`);
+  }
+}
+
+export function assertImageSize(width, height, label = '画像') {
+  const pixels = Math.ceil(width) * Math.ceil(height);
+  if (!Number.isFinite(pixels) || pixels <= 0) throw new Error(`${label} のサイズが不正です`);
+  if (pixels > LIMITS.maxImagePixels) {
+    throw new Error(`${label} が大きすぎます (${Math.round(pixels / 1_000_000)}MP / 上限 ${Math.round(LIMITS.maxImagePixels / 1_000_000)}MP)`);
+  }
 }
 
 export function downloadBytes(bytes, fileName, mime = 'application/pdf') {

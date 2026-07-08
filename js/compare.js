@@ -1,6 +1,6 @@
 // ===== PDF比較: 2つのPDFのピクセル差分 + テキスト差分 =====
 import { state, pdfjsLib, hasDoc } from './state.js';
-import { $, showDialog, showProgress, hideProgress, pickFile, alertDialog } from './utils.js';
+import { $, showDialog, showProgress, hideProgress, pickFile, alertDialog, escapeHTML, LIMITS, validateFiles, assertCanvasSize } from './utils.js';
 import pixelmatch from '../vendor/pixelmatch.mjs';
 
 export async function compareDialog() {
@@ -8,26 +8,37 @@ export async function compareDialog() {
   if (!hasDoc() && !fileA) return;
   const fileB = await pickFileWithMessage();
   if (!fileB) return;
+  validateFiles([fileA, fileB].filter(Boolean));
 
   showProgress('比較を準備中...');
   let pdfA = null, pdfB = null;
+  let ownPdfA = false;
   try {
     if (hasDoc()) pdfA = state.pdf;
-    else pdfA = await (pdfjsLib.getDocument({ data: new Uint8Array(await fileA.arrayBuffer()) })).promise;
+    else {
+      pdfA = await (pdfjsLib.getDocument({ data: new Uint8Array(await fileA.arrayBuffer()) })).promise;
+      ownPdfA = true;
+    }
     pdfB = await (pdfjsLib.getDocument({ data: new Uint8Array(await fileB.arrayBuffer()) })).promise;
 
     const nameA = hasDoc() ? state.fileName : fileA.name;
     const results = [];
     const n = Math.max(pdfA.numPages, pdfB.numPages);
+    if (n > LIMITS.maxBatchPages) {
+      throw new Error(`比較できるのは${LIMITS.maxBatchPages}ページまでです (${n}ページ)。範囲を分けて比較してください。`);
+    }
     for (let p = 1; p <= n; p++) {
       showProgress(`比較中... ページ ${p}/${n}`, p / n);
       results.push(await comparePage(pdfA, pdfB, p));
     }
     hideProgress();
-    showResults(nameA, fileB.name, results, pdfA, pdfB);
+    await showResults(nameA, fileB.name, results);
   } catch (e) {
     hideProgress();
     alertDialog('比較エラー', e.message);
+  } finally {
+    if (ownPdfA) await pdfA?.destroy?.().catch(() => {});
+    await pdfB?.destroy?.().catch(() => {});
   }
 }
 
@@ -41,6 +52,7 @@ async function renderAt(pdf, pageNum, width) {
   const page = await pdf.getPage(pageNum);
   const vp1 = page.getViewport({ scale: 1 });
   const vp = page.getViewport({ scale: width / vp1.width });
+  assertCanvasSize(vp.width, vp.height, `比較ページ${pageNum}`);
   const c = document.createElement('canvas');
   c.width = Math.round(vp.width); c.height = Math.round(vp.height);
   const ctx = c.getContext('2d');
@@ -96,6 +108,9 @@ async function comparePage(pdfA, pdfB, p) {
 // 行単位のLCS差分
 function lineDiff(a, b) {
   const m = a.length, n = b.length;
+  if (m * n > 250000) {
+    return [{ type: 'del', text: 'テキスト差分が大きすぎるため、行単位の詳細比較を省略しました。' }];
+  }
   const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
   for (let i = m - 1; i >= 0; i--)
     for (let j = n - 1; j >= 0; j--)
@@ -112,10 +127,12 @@ function lineDiff(a, b) {
   return out;
 }
 
-function showResults(nameA, nameB, results, pdfA, pdfB) {
+function showResults(nameA, nameB, results) {
   const changed = results.filter(r => r.diffPixels / r.total > 0.0005 || r.textDiff.length || r.missing);
   let cur = 0;
   const pages = changed.length ? changed : results;
+  const safeNameA = escapeHTML(nameA);
+  const safeNameB = escapeHTML(nameB);
 
   const render = () => {
     const r = pages[cur];
@@ -131,8 +148,8 @@ function showResults(nameA, nameB, results, pdfA, pdfB) {
         </div>
       </div>
       <div class="compare-grid">
-        <div><canvas id="cmp-a"></canvas><div class="cap">旧: ${nameA}</div></div>
-        <div><canvas id="cmp-b"></canvas><div class="cap">新: ${nameB}</div></div>
+        <div><canvas id="cmp-a"></canvas><div class="cap">旧: ${safeNameA}</div></div>
+        <div><canvas id="cmp-b"></canvas><div class="cap">新: ${safeNameB}</div></div>
         <div><canvas id="cmp-d"></canvas><div class="cap">差分(赤 = 変更箇所)</div></div>
       </div>
       ${r.textDiff.length ? `<div class="diff-text-report">${r.textDiff.map(d =>
@@ -147,10 +164,11 @@ function showResults(nameA, nameB, results, pdfA, pdfB) {
     body.querySelector('#cmp-next').onclick = () => { cur = (cur + 1) % pages.length; render(); };
   };
 
-  showDialog(`比較結果 — ${changed.length ? `${changed.length}ページに差分があります` : '差分は検出されませんでした'}`, '', [
+  const done = showDialog(`比較結果 — ${changed.length ? `${changed.length}ページに差分があります` : '差分は検出されませんでした'}`, '', [
     { label: '閉じる', accent: true },
   ]);
   render();
+  return done;
 }
 
 function mergeDiff(base, diff) {
@@ -165,5 +183,5 @@ function mergeDiff(base, diff) {
 }
 
 function escapeHtml(s) {
-  return s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  return String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 }

@@ -8,6 +8,7 @@ const PORT = +(process.argv[2] || process.env.PORT || 8080);
 const HOST = process.argv[3] || process.env.HOST || '127.0.0.1';
 const ROOT = __dirname;
 const LOG_LIMIT = 16 * 1024;
+const LOG_FILE_LIMIT = 256 * 1024;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -45,6 +46,24 @@ function isLocalRequest(req) {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
+function isLocalHostname(hostname) {
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1' || hostname === '[::1]';
+}
+
+function isAllowedLogOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) {
+    const site = req.headers['sec-fetch-site'];
+    return !site || site === 'same-origin' || site === 'none';
+  }
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && url.host === req.headers.host && isLocalHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedFile(file) {
   const rel = path.relative(ROOT, file);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
@@ -57,16 +76,20 @@ function isAllowedFile(file) {
 
 function handleLog(req, res) {
   if (!isLocalRequest(req)) return send(res, 403, 'Forbidden');
+  if (!isAllowedLogOrigin(req)) return send(res, 403, 'Forbidden');
   const lengthHeader = req.headers['content-length'];
   if (lengthHeader !== undefined && !/^\d+$/.test(lengthHeader)) return send(res, 400, 'Bad Request');
   const declared = Number(lengthHeader || 0);
   if (declared > LOG_LIMIT) return send(res, 413, 'Payload Too Large');
 
   let size = 0;
+  let rejected = false;
   const chunks = [];
   req.on('data', chunk => {
+    if (rejected) return;
     size += chunk.length;
     if (size > LOG_LIMIT) {
+      rejected = true;
       send(res, 413, 'Payload Too Large');
       req.destroy();
       return;
@@ -74,19 +97,27 @@ function handleLog(req, res) {
     chunks.push(chunk);
   });
   req.on('end', () => {
-    fs.appendFile(path.join(ROOT, 'smoke-result.log'), Buffer.concat(chunks).toString('utf8') + '\n', err => {
-      if (err) return send(res, 500, 'Log write failed');
-      res.writeHead(204, {
-        'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
+    if (rejected) return;
+    const file = path.join(ROOT, 'smoke-result.log');
+    const line = Buffer.concat(chunks).toString('utf8') + '\n';
+    fs.stat(file, (statErr, stat) => {
+      const write = statErr || stat.size + Buffer.byteLength(line) > LOG_FILE_LIMIT ? fs.writeFile : fs.appendFile;
+      write(file, line, err => {
+        if (err) return send(res, 500, 'Log write failed');
+        res.writeHead(204, {
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'no-referrer',
+        });
+        res.end();
       });
-      res.end();
     });
   });
-  req.on('error', () => send(res, 400, 'Bad Request'));
+  req.on('error', () => {
+    if (!rejected && !res.headersSent) send(res, 400, 'Bad Request');
+  });
 }
 
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   let urlPath;
   try {
     urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
@@ -117,6 +148,17 @@ http.createServer((req, res) => {
     if (req.method === 'HEAD') res.end();
     else res.end(data);
   });
-}).listen(PORT, HOST, () => {
+});
+
+server.on('error', err => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Try: node server.js ${PORT + 1}`);
+  } else {
+    console.error(err);
+  }
+  process.exit(1);
+});
+
+server.listen(PORT, HOST, () => {
   console.log(`PDF Editor Pro: http://${HOST}:${PORT} (Ctrl+C to stop)`);
 });

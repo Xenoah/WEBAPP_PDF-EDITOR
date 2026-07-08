@@ -1,6 +1,6 @@
 // Service Worker for offline app assets.
 // App shell is network-first; explicit vendor assets are cache-first.
-const CACHE = 'pdf-editor-pro-v5';
+const CACHE = 'pdf-editor-pro-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,7 @@ const ASSETS = [
   './vendor/pdf-lib.min.js', './vendor/fontkit.umd.min.js',
   './vendor/jszip.min.js', './vendor/pixelmatch.mjs',
   './vendor/tesseract.min.js', './vendor/tesseract.worker.min.js',
-  './vendor/mammoth.browser.min.js', './vendor/xlsx.full.min.js',
+  './vendor/mammoth.browser.min.js',
   './vendor/docx.iife.js', './vendor/pptxgen.bundle.js',
   './vendor/fonts/ipaexg.ttf',
   './vendor/tessdata/eng.traineddata.gz', './vendor/tessdata/jpn.traineddata.gz',
